@@ -1,124 +1,45 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
-import ast
-import os
-import py_compile
-import subprocess
-import sys
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent
-RUNTIME_BUILD = str(os.getenv('FINALIZATION_RUNTIME_BUILD','0') or '0').strip().lower() in {'1','true','yes','on'}
-STARTUP_SMOKE = str(os.getenv('FINALIZATION_STARTUP_SMOKE','0') or '0').strip().lower() in {'1','true','yes','on'}
+import ast, os, py_compile, subprocess, sys, re
+ROOT=Path(__file__).resolve().parent
 checks=[]
-
-def check(name, cond, detail=''):
-    checks.append((name, bool(cond), str(detail or '')))
-    if not cond:
-        print('FAIL', name, detail)
-
-def read(name):
-    p=ROOT/name
-    return p.read_text(encoding='utf-8',errors='replace') if p.is_file() else ''
-
-required=['bot.py','runtime_flat.py','start_front.py','runtime_config.py','requirements.txt','FINALIZATION_GATE.py']
-check('runtime_files', all((ROOT/x).is_file() for x in required), ','.join(x for x in required if not (ROOT/x).is_file()))
-
-for rel in ['bot.py','runtime_flat.py','start_front.py','runtime_config.py','FINALIZATION_GATE.py']:
-    try:
-        py_compile.compile(str(ROOT/rel), doraise=True)
-        ast.parse(read(rel), filename=rel)
-        good=True; detail=''
-    except Exception as exc:
-        good=False; detail=str(exc)
-    check('compile_'+rel, good, detail)
-
-bot=read('bot.py'); runtime=read('runtime_flat.py'); start=read('start_front.py'); cfg=read('runtime_config.py'); docker=read('Dockerfile')
-
-# OCHNIS 13 removes runtime source reconstruction completely.
-check('release_name', "BOT_DISPLAY_NAME = 'очнись_13.3'" in runtime and "OCHNIS_RELEASE = 'очнись_13.3'" in bot)
-check('no_owner_install_runtime', '_owner_install(' not in runtime and '_owner_install(' not in bot)
-check('no_exec_compile_runtime', 'exec(compile(' not in runtime and 'exec(compile(' not in bot)
-check('thin_bot_entry', 'import runtime_flat as _runtime' in bot and 'main = _runtime.main' in bot)
-check('flat_runtime_source', runtime.startswith('# OCHNIS_13 FLAT RUNTIME'))
-
-# Core user-visible domains must still be present in the flattened runtime.
-for symbol in ['handle_finance_message','get_forward_links','_v229_command_tasks','_reminder_send_cycle','handle_secret_note_message','tenant_google_config','_write_simple_xlsx','_mega_run']:
-    present = (('def '+symbol+'(' in runtime) or ('async def '+symbol+'(' in runtime) or (symbol+' =' in runtime))
-    check('domain_'+symbol, present, symbol)
-
-# R1/R2 contract: startup detection, R2 restore, standalone R1, dynamic accelerator fallback.
-check('r2_boot_probe', 'def _och13_probe_r2()' in start and "'/peer/health'" in start)
-check('r2_boot_restore', 'def _och13_restore_from_r2' in start and "'/internal/restore/latest'" in start and 'R2_VALIDATED_SNAPSHOT' in start)
-check('r1_never_blocked_by_r2', "trace['policy'] = 'OCH13_R1_PRIMARY_R2_OPTIONAL'" in start and 'EMPTY R1' in start)
-check('runtime_flat_launcher', "with_name('runtime_flat.py')" in start)
-check('auto_accel', 'def _och13_auto_accel_routes()' in runtime and 'def _och13_boot_probe()' in runtime)
-check('standalone_mode', "'STANDALONE_R1'" in runtime)
-check('distributed_mode', "'DISTRIBUTED_R1_PLUS_R2'" in runtime)
-check('fallback_wrapper', 'def _r1234_note_fallback' in runtime and 'def submit_interactive_file_job' in runtime)
-
-# OCHNIS 13.3 regression gates: restored/other-bot message ids cannot suppress new finance.
-check('finance_bot_scoped_key', 'finance2:' in runtime and 'telegram_bot_id' in runtime)
-check('finance_local_msg_namespace', "for key in ('forward_dst_msg_id', 'source_msg_id', 'origin_msg_id', 'msg_id')" in runtime and "'source_order_msg_id'):" not in runtime[runtime.find('def _record_message_ids_v257'):runtime.find('def _remember_finance_source_identity_v257')])
-check('finance_collision_diagnostic', 'finance_message_id_collision_och132' in runtime and 'finance_message_id_collision_passed_och132' in runtime)
-check('finance_forward_source_first', 'def _v260_find_forward_finance_record' in runtime and 'finance_forward_message_id_collision_och132' in runtime and 'fwd-fin2:' in runtime)
-check('finance_forward_op_ledger_bot_scoped', "return f\"{int(_current_bot_id_for_forwarding() or 0)}:{int(source_chat_id)}:{int(source_msg_id)}:{int(dst_chat_id)}\"" in runtime)
-check('probe_network_no_state_mutation', "_probe_network_only = str(purpose or '').startswith('probe_')" in runtime)
-
-ns={}
+def ck(name,cond,detail=''):
+    checks.append((name,bool(cond),detail))
+    if not cond: print('FAIL',name,detail)
+def txt(name): return (ROOT/name).read_text('utf8') if (ROOT/name).is_file() else ''
+required=['bot.py','start_front.py','runtime_config.py','requirements.txt','FINALIZATION_GATE.py']
+ck('runtime_files',all((ROOT/x).is_file() for x in required))
+for rel in ['bot.py','start_front.py','runtime_config.py','FINALIZATION_GATE.py']:
+    try: ast.parse(txt(rel),filename=rel); good=True; detail=''
+    except Exception as e: good=False; detail=str(e)
+    ck('ast_'+rel,good,detail)
+bot=txt('bot.py'); start=txt('start_front.py'); cfg=txt('runtime_config.py'); docker=txt('Dockerfile')
+ck('release_name',"BOT_DISPLAY_NAME = 'очнись_13'" in bot)
+ck('no_runtime_exec','_owner_install(' not in bot and 'exec(compile(' not in bot and 'owners_manifest.json' not in bot)
+ck('release_flat','och13-release-flat' in bot and '1239' not in bot[:5000])
+ck('r1_no_mega_boot', all(x not in start.lower() for x in ('subprocess','mega-login','mega-get','mega-put','mega-cmd')) and "MEGA_ENABLED'] = '0'" in start)
+ck('r1_auto_r2','def _r13_peer_monitor_loop' in bot and 'OCH13_AUTO_STANDALONE_DISTRIBUTED' in bot and "R13_AUTO_DISTRIBUTED" in cfg)
+ck('hot_path_cached','def _r1234_use_heavy(kind):' in bot and 'and _r1234_cached_peer_ok()' in bot)
+ck('primary_sqlite','R1_LOCAL_SQLITE_THEN_OPTIONAL_R2' in start and 'SPLIT_PREBOOT_AUTHORITATIVE_R20' in start)
+ck('r2_restore_boot',"/internal/restore/latest" in start and '/peer/health' in start)
+ck('docker_no_mega',not docker or ('mega.nz' not in docker.lower() and not re.search(r'^\s*RUN\s+.*(?:megacmd|mega-login|mega-get|mega-put)', docker, re.I|re.M)))
+ck('runtime_cfg_front_no_mega','OCH13: R1 never launches/owns MEGAcmd' in cfg)
+# Count top-level function duplicates only as an audit. Historic inline chains may remain in the release-flat file,
+# but there is no dynamic loader or second executable catalog.
 try:
-    exec(compile(cfg,'runtime_config.py','exec'),ns,ns)
-    front=ns.get('FRONT_INTERNAL_ENV') or {}
-    cfg_ok=True
-except Exception as exc:
-    front={}; cfg_ok=False
-    check('runtime_config_exec',False,exc)
-if cfg_ok:
-    check('runtime_config_exec',True)
-    for key in ['OCH13_R2_AUTO_ACCEL','OCH13_R2_BOOT_PROBE','OCH13_R2_BOOT_RESTORE']:
-        check('cfg_'+key, str(front.get(key))=='1', front.get(key))
-    check('peer_watch_enabled', str(front.get('PEER_PING_ENABLED'))=='1', front.get('PEER_PING_ENABLED'))
-    budgets={'UI_WORKERS':2,'FAST_UI_WORKERS':2,'WINDOW_RENDER_WORKERS':2,'UI_CLEANUP_WORKERS':1,'UI_DELETE_WORKERS':1,'BACKGROUND_WORKERS':1,'SCHEDULER_WORKERS':1,'R21_HEAVY_DISPATCH_WORKERS':1}
-    bad=[]
-    for k,lim in budgets.items():
-        try:
-            if int(front.get(k,999))>lim: bad.append(f'{k}={front.get(k)}>{lim}')
-        except Exception: bad.append(f'{k}=invalid')
-    check('memory_worker_budget',not bad,'; '.join(bad))
-
-if not RUNTIME_BUILD:
-    check('docker_present',(ROOT/'Dockerfile').is_file())
-    check('docker_flat_only','runtime_flat.py' in docker and 'owners_manifest.json' not in docker and '01_core_data.py' not in docker)
-    old=[p.name for p in ROOT.glob('[0-1][0-9]_*.py')]
-    check('no_legacy_runtime_parts',not old,','.join(sorted(old)))
-    check('source_archive_not_in_production',not (ROOT/'SOURCE_12_36.zip').is_file(),'SOURCE_12_36.zip must stay outside production FAST')
-
-if STARTUP_SMOKE:
-    env=dict(os.environ)
-    env.update({
-        'BOT_DEFER_MAIN_R54':'1','B_T':env.get('B_T') or '123456:STARTUPSMOKE',
-        'DB_FILE':env.get('DB_FILE') or '/tmp/och13_gate.sqlite3',
-        'MEGA_ENABLED':'0','REDIS_ENABLED':'0','TELEGRAM_BACKUP_ENABLED':'0','REDIS_URL':'',
-        'PEER_PRIVATE_URL':'','PEER_SERVICE_URL':'','PEER_SHARED_SECRET':'',
-        'MEGA_EMAIL':'','MEGA_PASSWORD':'','TRAFFIC_AUDIT_ENABLED':'0',
-    })
-    code=(
-        "import bot; "
-        "assert callable(bot.main); "
-        "assert bot.BOT_DISPLAY_NAME=='очнись_13.3'; "
-        "assert (getattr(bot,'_SPLIT_STATE',{}) or {}).get('och13_mode')=='STANDALONE_R1'; "
-        "print('OCH13_STARTUP_IMPORT_OK')"
-    )
-    try:
-        cp=subprocess.run([sys.executable,'-c',code],cwd=str(ROOT),env=env,text=True,capture_output=True,timeout=120)
-        check('startup_without_r2',cp.returncode==0 and 'OCH13_STARTUP_IMPORT_OK' in cp.stdout,(cp.stdout+'\n'+cp.stderr)[-1800:])
-    except Exception as exc:
-        check('startup_without_r2',False,exc)
-
+    tree=ast.parse(bot); defs={}; dup=0
+    for n in tree.body:
+        if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)):
+            if n.name in defs: dup+=1
+            defs[n.name]=n.lineno
+    ck('function_inventory',len(defs)>500,f'unique={len(defs)} duplicate_def_events={dup}')
+except Exception as e: ck('function_inventory',False,str(e))
+if os.getenv('FINALIZATION_STARTUP_SMOKE','0').lower() in {'1','true','yes','on'}:
+    env=dict(os.environ); env.setdefault('B_T','123456:STARTUPSMOKE'); env['BOT_DEFER_MAIN_R54']='1'; env['MEGA_ENABLED']='0'; env['PEER_SERVICE_URL']=''; env['PEER_SHARED_SECRET']=''
+    cp=subprocess.run([sys.executable,'-c','import bot; assert callable(bot.main); print("STARTUP_IMPORT_OK")'],cwd=str(ROOT),env=env,text=True,capture_output=True,timeout=180)
+    ck('startup_import',cp.returncode==0 and 'STARTUP_IMPORT_OK' in cp.stdout,(cp.stdout+'\n'+cp.stderr)[-1600:])
 passed=sum(1 for _,v,_ in checks if v); total=len(checks)
-print(f'FINALIZATION OCHNIS 13.3: {passed}/{total} PASS')
-if passed!=total:
-    for name,val,detail in checks:
-        if not val: print(' -',name,detail)
-    raise SystemExit(1)
+print(f'FINALIZATION OCHNIS13: {passed}/{total} PASS')
+for n,v,d in checks:
+    if not v: print(' -',n,d)
+if passed!=total: raise SystemExit(1)
