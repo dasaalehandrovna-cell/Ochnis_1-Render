@@ -1,6 +1,6 @@
 # v262
 #!/usr/bin/env python3
-"""OCHNIS 13 Render #1 launcher: R1 is primary; R2 is optional.
+"""OCHNIS 13.2 Render #1 launcher: R1 is primary; R2 is optional.
 
 Startup policy:
 - reuse a valid local SQLite immediately;
@@ -1866,7 +1866,7 @@ def main():
     try:
         current_valid = bool(local_valid_before)
 
-        # OCHNIS 13: local SQLite wins. If missing/invalid, R2 is checked once but is
+        # OCHNIS 13.2: local SQLite wins. If missing/invalid, R2 is checked once but is
         # never a startup dependency: failed probe/restore immediately falls through to
         # R1 emergency recovery and finally empty SQLite initialization.
         trace['policy'] = 'OCH13_R1_PRIMARY_R2_OPTIONAL'

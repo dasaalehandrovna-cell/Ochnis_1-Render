@@ -37,7 +37,7 @@ for rel in ['bot.py','runtime_flat.py','start_front.py','runtime_config.py','FIN
 bot=read('bot.py'); runtime=read('runtime_flat.py'); start=read('start_front.py'); cfg=read('runtime_config.py'); docker=read('Dockerfile')
 
 # OCHNIS 13 removes runtime source reconstruction completely.
-check('release_name', "BOT_DISPLAY_NAME = 'очнись_13'" in runtime and "OCHNIS_RELEASE = 'очнись_13'" in bot)
+check('release_name', "BOT_DISPLAY_NAME = 'очнись_13.3'" in runtime and "OCHNIS_RELEASE = 'очнись_13.3'" in bot)
 check('no_owner_install_runtime', '_owner_install(' not in runtime and '_owner_install(' not in bot)
 check('no_exec_compile_runtime', 'exec(compile(' not in runtime and 'exec(compile(' not in bot)
 check('thin_bot_entry', 'import runtime_flat as _runtime' in bot and 'main = _runtime.main' in bot)
@@ -57,6 +57,14 @@ check('auto_accel', 'def _och13_auto_accel_routes()' in runtime and 'def _och13_
 check('standalone_mode', "'STANDALONE_R1'" in runtime)
 check('distributed_mode', "'DISTRIBUTED_R1_PLUS_R2'" in runtime)
 check('fallback_wrapper', 'def _r1234_note_fallback' in runtime and 'def submit_interactive_file_job' in runtime)
+
+# OCHNIS 13.3 regression gates: restored/other-bot message ids cannot suppress new finance.
+check('finance_bot_scoped_key', 'finance2:' in runtime and 'telegram_bot_id' in runtime)
+check('finance_local_msg_namespace', "for key in ('forward_dst_msg_id', 'source_msg_id', 'origin_msg_id', 'msg_id')" in runtime and "'source_order_msg_id'):" not in runtime[runtime.find('def _record_message_ids_v257'):runtime.find('def _remember_finance_source_identity_v257')])
+check('finance_collision_diagnostic', 'finance_message_id_collision_och132' in runtime and 'finance_message_id_collision_passed_och132' in runtime)
+check('finance_forward_source_first', 'def _v260_find_forward_finance_record' in runtime and 'finance_forward_message_id_collision_och132' in runtime and 'fwd-fin2:' in runtime)
+check('finance_forward_op_ledger_bot_scoped', "return f\"{int(_current_bot_id_for_forwarding() or 0)}:{int(source_chat_id)}:{int(source_msg_id)}:{int(dst_chat_id)}\"" in runtime)
+check('probe_network_no_state_mutation', "_probe_network_only = str(purpose or '').startswith('probe_')" in runtime)
 
 ns={}
 try:
@@ -84,7 +92,7 @@ if not RUNTIME_BUILD:
     check('docker_flat_only','runtime_flat.py' in docker and 'owners_manifest.json' not in docker and '01_core_data.py' not in docker)
     old=[p.name for p in ROOT.glob('[0-1][0-9]_*.py')]
     check('no_legacy_runtime_parts',not old,','.join(sorted(old)))
-    check('source_archive_preserved',(ROOT/'SOURCE_12_36.zip').is_file(),'SOURCE_12_36.zip')
+    check('source_archive_not_in_production',not (ROOT/'SOURCE_12_36.zip').is_file(),'SOURCE_12_36.zip must stay outside production FAST')
 
 if STARTUP_SMOKE:
     env=dict(os.environ)
@@ -98,7 +106,7 @@ if STARTUP_SMOKE:
     code=(
         "import bot; "
         "assert callable(bot.main); "
-        "assert bot.BOT_DISPLAY_NAME=='очнись_13'; "
+        "assert bot.BOT_DISPLAY_NAME=='очнись_13.3'; "
         "assert (getattr(bot,'_SPLIT_STATE',{}) or {}).get('och13_mode')=='STANDALONE_R1'; "
         "print('OCH13_STARTUP_IMPORT_OK')"
     )
@@ -109,7 +117,7 @@ if STARTUP_SMOKE:
         check('startup_without_r2',False,exc)
 
 passed=sum(1 for _,v,_ in checks if v); total=len(checks)
-print(f'FINALIZATION OCHNIS 13: {passed}/{total} PASS')
+print(f'FINALIZATION OCHNIS 13.3: {passed}/{total} PASS')
 if passed!=total:
     for name,val,detail in checks:
         if not val: print(' -',name,detail)

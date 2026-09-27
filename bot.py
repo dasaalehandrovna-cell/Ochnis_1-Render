@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OCHNIS 13 thin compatibility entrypoint.
+"""OCHNIS 13.2 thin compatibility entrypoint.
 
 The historical source catalogs are flattened before deployment into runtime_flat.py.
 Runtime startup therefore performs no AST source-catalog scan and no dynamic source reconstruction.
@@ -13,7 +13,7 @@ install_internal_runtime_config('front')
 
 import runtime_flat as _runtime
 
-OCHNIS_RELEASE = 'очнись_13'
+OCHNIS_RELEASE = 'очнись_13.3'
 main = _runtime.main
 app = _runtime.app
 bot = _runtime.bot

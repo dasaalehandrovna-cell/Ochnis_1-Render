@@ -1,5 +1,5 @@
 # OCHNIS_13 FLAT RUNTIME - generated from OCH12.36
-OCHNIS_RELEASE = "очнись_13"
+OCHNIS_RELEASE = "очнись_13.3"
 
 # ===== SOURCE 01_core_data.py =====
 # OCH12.34: infrastructure/wiring shell; business function bodies live only in 11-14 owner files.
@@ -1386,15 +1386,15 @@ def _env_int(name: str, default: int, minimum: int=1, maximum: int=128) -> int:
     except Exception:
         return int(default)
 WEBHOOK_TASK_POOL = KeyedTaskPool('content', _env_int('WEBHOOK_WORKERS', 2, 2, 8), _env_int('WEBHOOK_MAX_PENDING', 400, 50, 2000))
-UI_TASK_POOL = KeyedTaskPool('ui', _env_int('UI_WORKERS', 2, 2, 8), _env_int('UI_MAX_PENDING', 400, 50, 2000))
+UI_TASK_POOL = KeyedTaskPool('ui', _env_int('UI_WORKERS', 1, 1, 8), _env_int('UI_MAX_PENDING', 400, 50, 2000))
 # R19: dedicated lane for light navigation/window callbacks. Heavy/business UI
 # can saturate UI_TASK_POOL without delaying the user's next menu/button reaction.
 FAST_UI_TASK_POOL = KeyedTaskPool('fast-ui', _env_int('FAST_UI_WORKERS', 2, 2, 8), _env_int('FAST_UI_MAX_PENDING', 600, 50, 2000))
 # R65: dedicated high-priority lane for idempotent Back / Info / Main navigation.
 # It never waits behind ordinary window callbacks or background chat probes.
-NAVIGATION_TASK_POOL = LatestKeyedTaskPool('nav-ui', _env_int('NAVIGATION_UI_WORKERS', 4, 2, 6), _env_int('NAVIGATION_UI_MAX_PENDING', 256, 32, 1000))
+NAVIGATION_TASK_POOL = LatestKeyedTaskPool('nav-ui', _env_int('NAVIGATION_UI_WORKERS', 1, 1, 6), _env_int('NAVIGATION_UI_MAX_PENDING', 256, 32, 1000))
 # R22: Telegram editMessageText/caption runs here, never inside callback workers.
-WINDOW_RENDER_TASK_POOL = LatestKeyedTaskPool('window-render', _env_int('WINDOW_RENDER_WORKERS', 2, 2, 12), _env_int('WINDOW_RENDER_MAX_PENDING_KEYS', 256, 32, 1000))
+WINDOW_RENDER_TASK_POOL = LatestKeyedTaskPool('window-render', _env_int('WINDOW_RENDER_WORKERS', 1, 1, 12), _env_int('WINDOW_RENDER_MAX_PENDING_KEYS', 256, 32, 1000))
 CALLBACK_ACK_TASK_POOL = KeyedTaskPool('callback-ack', _env_int('CALLBACK_ACK_WORKERS', 2, 1, 4), _env_int('CALLBACK_ACK_MAX_PENDING', 600, 50, 3000))
 # R77: callback durability and diagnostic journal work must never share one single-worker lane.
 # The old ui-cleanup queue accumulated 10-15s of stale work and later competed for data/chat locks.
@@ -1404,7 +1404,7 @@ UI_CLEANUP_TASK_POOL = KeyedTaskPool('ui-cleanup', _env_int('UI_CLEANUP_WORKERS'
 UI_DELETE_TASK_POOL = KeyedTaskPool('ui-delete', _env_int('UI_DELETE_WORKERS', 1, 1, 4), _env_int('UI_DELETE_MAX_PENDING', 1200, 100, 4000))
 RECOVERY_TASK_POOL = KeyedTaskPool('recovery', _env_int('RECOVERY_WORKERS', 1, 1, 3), _env_int('RECOVERY_MAX_PENDING', 300, 50, 1500))
 REMINDER_TASK_POOL = KeyedTaskPool('reminder', _env_int('REMINDER_WORKERS', 1, 1, 3), _env_int('REMINDER_MAX_PENDING', 250, 20, 1000))
-FINANCE_TASK_POOL = KeyedTaskPool('finance', _env_int('FINANCE_WORKERS', 2, 2, 8), _env_int('FINANCE_MAX_PENDING', 400, 50, 2000))
+FINANCE_TASK_POOL = KeyedTaskPool('finance', _env_int('FINANCE_WORKERS', 1, 1, 8), _env_int('FINANCE_MAX_PENDING', 400, 50, 2000))
 FINANCE_MAINT_TASK_POOL = KeyedTaskPool('finance-maint', _env_int('FINANCE_MAINT_WORKERS', 1, 1, 3), _env_int('FINANCE_MAINT_MAX_PENDING', 300, 50, 1500))
 FIN_FORWARD_TASK_POOL = KeyedTaskPool('fin-forward', _env_int('FIN_FORWARD_WORKERS', 3, 1, 8), _env_int('FIN_FORWARD_MAX_PENDING', 500, 50, 2500))
 FORWARD_TASK_POOL = KeyedTaskPool('forward', _env_int('FORWARD_WORKERS', 1, 1, 6), _env_int('FORWARD_MAX_PENDING', 500, 50, 2500))
@@ -2183,7 +2183,7 @@ RELEASE_SERIES = 'выс'
 RELEASE_NUMBER = 264
 VERSION = f'{RELEASE_SERIES}-{RELEASE_NUMBER}'
 BOT_FILE_NAME = os.path.basename(__file__) if '__file__' in globals() else 'bot_v130_modular_split.py'
-BOT_DISPLAY_NAME = 'очнись_13'
+BOT_DISPLAY_NAME = 'очнись_13.3'
 
 def _current_source_path() -> str:
     """Single-file path in legacy mode; reconstructed full source in modular mode."""
@@ -2319,7 +2319,7 @@ _media_group_timers = {}
 FORWARD_MEDIA_GROUP_DELAY = 0.8
 _FORWARD_OUTCOME_LOCK = threading.RLock()
 _FORWARD_OUTCOMES = {}
-_FORWARD_OUTCOME_MAX = 800
+_FORWARD_OUTCOME_MAX = max(50, min(800, int(os.getenv('FORWARD_OUTCOME_MAX', '200') or '200')))
 
 def _forward_outcome_key(source_chat_id: int, source_msg_id: int):
     return (int(source_chat_id), int(source_msg_id))
@@ -2430,16 +2430,22 @@ class SQLiteState:
         self.conn = sqlite3.connect(path, check_same_thread=False, timeout=1.5)
         self.conn.row_factory = sqlite3.Row
         self.read_lock = R25TracedRLock('sqlite-read-admin')
-        self.read_conn = None  # compatibility handle; OCH12 reads use thread-local connections
-        self._read_tls = threading.local()
+        self.read_conn = None  # compatibility handle only; OCH13.3 uses a bounded shared reader pool
         self._read_generation = 0
-        # OCH12.16 RAM: readers remain thread-local (no hot-path read lock), but their
-        # private SQLite page cache is deliberately small and mmap is disabled.
-        # The old 2 MB cache + 32 MB mmap per long-lived worker made RSS grow as
-        # more worker lanes touched SQLite.
+        # OCH13.3 RAM: fixed shared WAL-reader pool.  The old thread-local design kept
+        # one sqlite3.Connection alive for every worker thread that ever touched the DB
+        # (41 live reader threads / 339 created connections were observed on 512 MB R1).
+        # Four serialized-per-connection readers preserve parallel reads without letting
+        # thread count dictate SQLite memory.
+        try:
+            self._reader_pool_size = max(2, min(8, int(os.getenv('SQLITE_READER_POOL_SIZE', '4') or '4')))
+        except Exception:
+            self._reader_pool_size = 4
+        self._reader_pool = queue.LifoQueue(maxsize=self._reader_pool_size)
         self._reader_stats_lock = threading.Lock()
         self._reader_threads_seen = set()
         self._reader_connections_created = 0
+        self._reader_pool_timeouts = 0
         self._init_db()
         self._open_reader()
         self._writer_cv = threading.Condition(threading.RLock())
@@ -2591,47 +2597,78 @@ class SQLiteState:
             with self._reader_stats_lock:
                 created = int(self._reader_connections_created or 0)
                 threads_seen = len(self._reader_threads_seen)
+                pool_timeouts = int(self._reader_pool_timeouts or 0)
         except Exception:
-            created = 0; threads_seen = 0
+            created = 0; threads_seen = 0; pool_timeouts = 0
         try:
-            cache_kb = max(128, min(2048, int(os.getenv('SQLITE_READER_CACHE_KB', '384') or '384')))
+            cache_kb = max(64, min(1024, int(os.getenv('SQLITE_READER_CACHE_KB', '128') or '128')))
         except Exception:
-            cache_kb = 384
+            cache_kb = 128
         try:
             mmap_mb = max(0, min(16, int(os.getenv('SQLITE_READER_MMAP_MB', '0') or '0')))
         except Exception:
             mmap_mb = 0
-        return {'connections_created': created, 'threads_seen': threads_seen, 'generation': int(self._read_generation or 0), 'cache_kb_each': cache_kb, 'mmap_mb_each': mmap_mb}
+        try:
+            available = int(self._reader_pool.qsize())
+        except Exception:
+            available = 0
+        return {'connections_created': created, 'threads_seen': threads_seen, 'generation': int(self._read_generation or 0), 'cache_kb_each': cache_kb, 'mmap_mb_each': mmap_mb, 'pool_size': int(self._reader_pool_size or 0), 'pool_available': available, 'pool_timeouts': pool_timeouts}
+
+    def _close_reader_pool_locked(self):
+        while True:
+            try:
+                conn = self._reader_pool.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def _open_reader(self):
-        """OCH12: invalidate thread-local WAL readers after DB replacement."""
+        """OCH13.3: rebuild the bounded reader pool after DB replacement."""
         with self.read_lock:
             self._read_generation = int(self._read_generation or 0) + 1
-            old = getattr(self._read_tls, 'conn', None)
-            if old is not None:
-                try: old.close()
-                except Exception: pass
-            self._read_tls.conn = self._new_reader_v111()
-            self._read_tls.generation = self._read_generation
-            self.read_conn = self._read_tls.conn
+            self._close_reader_pool_locked()
+            first = None
+            for _ in range(int(self._reader_pool_size or 4)):
+                conn = self._new_reader_v111()
+                if first is None:
+                    first = conn
+                self._reader_pool.put_nowait(conn)
+            self.read_conn = first
 
-    def _reader_v111(self):
-        conn = getattr(self._read_tls, 'conn', None)
-        generation = int(getattr(self._read_tls, 'generation', -1) or -1)
-        if conn is None or generation != int(self._read_generation or 0):
+    @contextmanager
+    def _reader_checkout_v133(self, timeout: float=2.0):
+        conn = None
+        try:
+            try:
+                conn = self._reader_pool.get(timeout=max(0.05, float(timeout or 2.0)))
+            except queue.Empty:
+                with self._reader_stats_lock:
+                    self._reader_pool_timeouts += 1
+                raise TimeoutError('SQLite reader pool timeout')
+            try:
+                with self._reader_stats_lock:
+                    self._reader_threads_seen.add(int(threading.get_ident()))
+            except Exception:
+                pass
+            yield conn
+        finally:
             if conn is not None:
-                try: conn.close()
-                except Exception: pass
-            conn = self._new_reader_v111()
-            self._read_tls.conn = conn
-            self._read_tls.generation = int(self._read_generation or 0)
-        return conn
+                try:
+                    self._reader_pool.put_nowait(conn)
+                except Exception:
+                    try: conn.close()
+                    except Exception: pass
 
     def _read_one(self, sql: str, params=()):
-        return self._reader_v111().execute(sql, tuple(params)).fetchone()
+        with self._reader_checkout_v133() as conn:
+            return conn.execute(sql, tuple(params)).fetchone()
 
     def _read_all(self, sql: str, params=()):
-        return self._reader_v111().execute(sql, tuple(params)).fetchall()
+        with self._reader_checkout_v133() as conn:
+            return conn.execute(sql, tuple(params)).fetchall()
 
     def _dump(self, obj) -> str:
         return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))
@@ -2662,11 +2699,12 @@ class SQLiteState:
         # OCH12.18 RAM: stream rows from SQLite. fetchall() temporarily duplicated
         # every raw JSON row in RAM at the same time as the decoded chats dict.
         out = {}
-        cur = self._reader_v111().execute('SELECT chat_id, v FROM chats')
-        for row in cur:
-            val = self._load(row[1], {})
-            if isinstance(val, dict):
-                out[str(row[0])] = val
+        with self._reader_checkout_v133(timeout=5.0) as conn:
+            cur = conn.execute('SELECT chat_id, v FROM chats')
+            for row in cur:
+                val = self._load(row[1], {})
+                if isinstance(val, dict):
+                    out[str(row[0])] = val
         return out
 
     def save_chats(self, chats: dict):
@@ -7038,6 +7076,98 @@ try:
 except Exception:
     pass
 
+def _ochnis133_removed_chat_ram_gc(chat_id: int, reason: str='') -> dict:
+    """RAM-only/low-RAM cleanup for chats where Telegram confirmed the bot is gone.
+
+    Financial history stays authoritative in SQLite cold_fields.  We only evict loaded
+    history and transient runtime/UI caches.  The chat metadata/tombstone remains so the
+    owner can see that the bot was removed and can later reactivate the chat safely.
+    """
+    out={'chat_id': int(chat_id), 'cold_evicted': False, 'finance_cache': 0, 'window_diag': 0, 'active_finance': False}
+    cid=int(chat_id)
+    try:
+        fn=globals().get('_lowram_release_chat')
+        if callable(fn):
+            fn(cid); out['cold_evicted']=True
+    except Exception as exc:
+        out['cold_error']=str(exc)[:160]
+    try:
+        before=len(globals().get('_FINANCE_VIEW_CACHE') or {})
+        fn=globals().get('finance_cache_invalidate')
+        if callable(fn): fn(cid, 'removed-chat-gc')
+        out['finance_cache']=max(0,before-len(globals().get('_FINANCE_VIEW_CACHE') or {}))
+    except Exception:
+        pass
+    try:
+        fas=globals().get('finance_active_chats')
+        if isinstance(fas,set):
+            out['active_finance']=cid in fas; fas.discard(cid)
+    except Exception:
+        pass
+    try:
+        lock=globals().get('_WINDOW_DIAG_LOCK')
+        state=globals().get('_WINDOW_DIAG_STATE')
+        if isinstance(state,dict):
+            if lock is not None:
+                lock.acquire()
+            try:
+                keys=[k for k in list(state) if isinstance(k,tuple) and k and int(k[0])==cid]
+                for k in keys: state.pop(k,None)
+                out['window_diag']=len(keys)
+            finally:
+                if lock is not None: lock.release()
+    except Exception:
+        pass
+    try:
+        _memory_gc.collect() if '_memory_gc' in globals() else None
+    except Exception:
+        pass
+    try:
+        bot_journal('removed_chat_ram_gc_v133', cid, json.dumps(out,ensure_ascii=False,separators=(',',':'))[:1200])
+    except Exception:
+        pass
+    return out
+
+def _ochnis133_schedule_removed_chat_ram_gc(chat_id: int, reason: str='') -> None:
+    if str(os.getenv('REMOVED_CHAT_RAM_GC_ENABLED','1') or '1').lower() in {'0','false','off','no'}:
+        return
+    try:
+        scheduler=globals().get('DELAYED_SCHEDULER')
+        if scheduler is not None:
+            scheduler.schedule(f'removed-chat-ram-gc:{int(chat_id)}', 1.0, _ochnis133_removed_chat_ram_gc, int(chat_id), str(reason or ''))
+            return
+    except Exception:
+        pass
+    try:
+        threading.Thread(target=_ochnis133_removed_chat_ram_gc,args=(int(chat_id),str(reason or '')),daemon=True,name='removed-chat-gc').start()
+    except Exception:
+        pass
+
+def _ochnis133_removed_chat_sweep() -> dict:
+    """Evict restored tombstoned chats too; no Telegram/network calls here."""
+    rows=[]
+    try:
+        chats=(data.get('chats',{}) or {}) if isinstance(data,dict) else {}
+        for cid_s,store in list(chats.items()):
+            if not isinstance(store,dict): continue
+            settings=dict.get(store,'settings',{}) if isinstance(store,dict) else {}
+            if isinstance(settings,dict) and bool(settings.get('bot_removed',False)):
+                try: rows.append(int(cid_s))
+                except Exception: pass
+        for cid in rows[:64]:
+            _ochnis133_removed_chat_ram_gc(cid, 'periodic-restored-tombstone')
+    except Exception as exc:
+        try: log_error(f'removed chat RAM sweep: {exc}')
+        except Exception: pass
+    finally:
+        try:
+            scheduler=globals().get('DELAYED_SCHEDULER')
+            if scheduler is not None:
+                scheduler.schedule('removed-chat-ram-gc-sweep', 900.0, _ochnis133_removed_chat_sweep)
+        except Exception:
+            pass
+    return {'removed_chats':len(rows),'processed':min(len(rows),64)}
+
 def _v177_legacy_0035_set_chat_bot_removed(chat_id: int, removed: bool=True, reason: str='', *, persist: bool=True, schedule_backup: bool=True):
     try:
         chat_id = int(chat_id)
@@ -7059,6 +7189,9 @@ def _v177_legacy_0035_set_chat_bot_removed(chat_id: int, removed: bool=True, rea
             settings.pop('bot_removed_at', None)
         if persist:
             save_data(data)
+        if removed:
+            try: _ochnis133_schedule_removed_chat_ram_gc(chat_id, new_reason)
+            except Exception: pass
         if schedule_backup:
             try:
                 ids_for_backup = [chat_id]
@@ -9209,7 +9342,9 @@ def _tg_call_retry(func, *args, attempts: int=7, purpose: str='telegram', **kwar
                 try:
                     chat_id_for_mark = _tg_first_chat_id(args, kwargs)
                     if chat_id_for_mark is not None and _is_bot_removed_error(e):
-                        set_chat_bot_removed(int(chat_id_for_mark), True, str(e)[:240])
+                        _probe_network_only = str(purpose or '').startswith('probe_') and threading.current_thread().name.startswith('chat-probe-net')
+                        if not _probe_network_only:
+                            set_chat_bot_removed(int(chat_id_for_mark), True, str(e)[:240])
                 except Exception:
                     pass
                 raise
@@ -15476,7 +15611,7 @@ def build_runtime_watcher_text() -> str:
     child_text = '; '.join([f"{r.get('pid')} {r.get('name') or '?'} {r.get('rss_mb', '—')}MB" for r in child_rows[:4]]) or 'нет'
     thread_text = ', '.join([f"{k}×{v}" for k, v in list(thread_groups.items())[:8]]) or '—'
     cold_text = ', '.join([f"{k}={v}" for k, v in sorted(cold_by_key.items(), key=lambda kv: (-kv[1], kv[0]))[:10]]) or '—'
-    lines = ['🖥 Render / Сервер — Watcher', f'Состояние: {status}', f"Фаза: {st.get('phase') or '—'}", f'Версия: {BOT_DISPLAY_NAME} · {VERSION}', f"Uptime: {_fmt_runtime_age(proc.get('uptime_seconds'))}", f"Старт: {st.get('started_at') or '—'}", f"READY: {st.get('ready_at') or '—'}", f"BOOT: {(st.get('boot_duration_seconds') if st.get('boot_duration_seconds') is not None else '—')} сек", '', 'Render:', f"Instance: {(instance[-28:] if instance != '—' else instance)}", f"Commit: {(commit[:12] if commit != '—' else commit)}", f"Service: {ren.get('RENDER_SERVICE_NAME') or ren.get('RENDER_SERVICE_ID') or '—'}", f"Region/type: {ren.get('RENDER_REGION') or '—'} / {ren.get('RENDER_SERVICE_TYPE') or '—'}", f"PID/host: {proc.get('pid')} / {proc.get('hostname')}", '', 'Ресурсы:', f"Python RAM: {(proc.get('rss_mb') if proc.get('rss_mb') is not None else '—')} MB; пик: {(proc.get('peak_rss_mb') if proc.get('peak_rss_mb') is not None else '—')} MB", f"Контейнер RAM: {(proc.get('container_current_mb') if proc.get('container_current_mb') is not None else '—')} MB; пик: {(proc.get('container_peak_mb') if proc.get('container_peak_mb') is not None else '—')} MB", f"RAM лимит cgroup: {(proc.get('limit_mb') if proc.get('limit_mb') is not None else '—')} MB; контейнер: {(proc.get('container_percent_limit') if proc.get('container_percent_limit') is not None else '—')}%", f"Memory guard: {memrt.get('level') or '—'} | trim {memstate.get('trim_count', '—')} | malloc_trim {memstate.get('malloc_trim_count', '—')} | blocked exports {memstate.get('blocked_heavy_jobs', '—')}", f"Дочерние процессы: {len(memrt.get('children') or [])}; RAM детей {memrt.get('children_rss_mb', '—')} MB", f"Дети: {child_text}", f"Потоки TOP: {thread_text}", f"Диск: занято {(disk.get('used_mb') if disk.get('used_mb') is not None else '—')} MB; свободно {(disk.get('free_mb') if disk.get('free_mb') is not None else '—')} MB", f"Потоков Python: {proc.get('threads')}", f"Runtime объекты: операции {audit.get('operation_items', '—')} | integrity {audit.get('integrity_events', '—')} | forward outcomes {audit.get('forward_outcomes', '—')} | fin batches {audit.get('finance_forward_batches', '—')}", f"Кэши/буферы: finance {audit.get('finance_cache_entries', '—')} | expense {audit.get('expense_drafts', '—')} | journal {audit.get('journal_buffer_rows', '—')} | reminder mode {audit.get('reminder_mode', '—')}", '', 'RAM — источники:', f"anon {memroll.get('anonymous_mb', '—')} MB | private dirty {memroll.get('private_dirty_mb', '—')} MB | shared clean {memroll.get('shared_clean_mb', '—')} MB", f"cgroup: anon {cgroup_stat.get('anon_mb', '—')} | file {cgroup_stat.get('file_mb', '—')} | shmem {cgroup_stat.get('shmem_mb', '—')} | slab {cgroup_stat.get('slab_mb', '—')} | kernel {cgroup_stat.get('kernel_mb', '—')} MB", f"SQLite readers: threads {sqlite_readers.get('threads_seen', '—')} | created {sqlite_readers.get('connections_created', '—')} | cache {sqlite_readers.get('cache_kb_each', '—')} KB/reader | mmap {sqlite_readers.get('mmap_mb_each', '—')} MB/reader", f"Cold fields: loaded {memstruct.get('cold_fields_loaded', '—')} | records {cold_by_key.get('records', 0)} | ARS {cold_by_key.get('ars_records', 0)} | USD {cold_by_key.get('usd_records', 0)} | secret {cold_by_key.get('secret_messages', 0)}", f"Cold keys: {cold_text}", f"RAM buffers: log {membuffers.get('fast_log', 0)} | R32 pending {membuffers.get('r32_events_pending', membuffers.get('r32_events', 0))} (q {membuffers.get('r32_events', 0)}/ov {membuffers.get('r32_events_overflow', 0)}) | diag {membuffers.get('r45_diag', 0)} | short-cb {membuffers.get('short_callbacks', 0)} | jobs {membuffers.get('file_jobs_state', 0)}", '', 'BOOT / Telegram gate:', f"Restore: attempted={st.get('restore_attempted')} ok={st.get('restore_ok')} | {str(st.get('restore_detail') or '—')[:220]}", f"Recovery: start {st.get('task_recovery_started_at') or '—'} | finish {st.get('task_recovery_finished_at') or '—'} | осталось {st.get('task_recovery_remaining', 0)}", f"Webhook получено: {st.get('webhook_received', 0)}", f"Последний: {st.get('last_webhook_at') or '—'} | {st.get('last_webhook_type') or '—'} | update {st.get('last_webhook_update_id') or '—'} | chat {st.get('last_webhook_chat_id') or '—'}", f"Отклонено BOOT: {st.get('webhook_blocked_boot', 0)} | SHUTDOWN: {st.get('webhook_blocked_shutdown', 0)}", '', 'Очереди P/A | done err rej | max wait:']
+    lines = ['🖥 Render / Сервер — Watcher', f'Состояние: {status}', f"Фаза: {st.get('phase') or '—'}", f'Версия: {BOT_DISPLAY_NAME} · {VERSION}', f"Uptime: {_fmt_runtime_age(proc.get('uptime_seconds'))}", f"Старт: {st.get('started_at') or '—'}", f"READY: {st.get('ready_at') or '—'}", f"BOOT: {(st.get('boot_duration_seconds') if st.get('boot_duration_seconds') is not None else '—')} сек", '', 'Render:', f"Instance: {(instance[-28:] if instance != '—' else instance)}", f"Commit: {(commit[:12] if commit != '—' else commit)}", f"Service: {ren.get('RENDER_SERVICE_NAME') or ren.get('RENDER_SERVICE_ID') or '—'}", f"Region/type: {ren.get('RENDER_REGION') or '—'} / {ren.get('RENDER_SERVICE_TYPE') or '—'}", f"PID/host: {proc.get('pid')} / {proc.get('hostname')}", '', 'Ресурсы:', f"Python RAM: {(proc.get('rss_mb') if proc.get('rss_mb') is not None else '—')} MB; пик: {(proc.get('peak_rss_mb') if proc.get('peak_rss_mb') is not None else '—')} MB", f"Контейнер RAM: {(proc.get('container_current_mb') if proc.get('container_current_mb') is not None else '—')} MB; пик: {(proc.get('container_peak_mb') if proc.get('container_peak_mb') is not None else '—')} MB", f"RAM лимит cgroup: {(proc.get('limit_mb') if proc.get('limit_mb') is not None else '—')} MB; контейнер: {(proc.get('container_percent_limit') if proc.get('container_percent_limit') is not None else '—')}%", f"Memory guard: {memrt.get('level') or '—'} | trim {memstate.get('trim_count', '—')} | malloc_trim {memstate.get('malloc_trim_count', '—')} | blocked exports {memstate.get('blocked_heavy_jobs', '—')}", f"Дочерние процессы: {len(memrt.get('children') or [])}; RAM детей {memrt.get('children_rss_mb', '—')} MB", f"Дети: {child_text}", f"Потоки TOP: {thread_text}", f"Диск: занято {(disk.get('used_mb') if disk.get('used_mb') is not None else '—')} MB; свободно {(disk.get('free_mb') if disk.get('free_mb') is not None else '—')} MB", f"Потоков Python: {proc.get('threads')}", f"Runtime объекты: операции {audit.get('operation_items', '—')} | integrity {audit.get('integrity_events', '—')} | forward outcomes {audit.get('forward_outcomes', '—')} | fin batches {audit.get('finance_forward_batches', '—')}", f"Кэши/буферы: finance {audit.get('finance_cache_entries', '—')} | expense {audit.get('expense_drafts', '—')} | journal {audit.get('journal_buffer_rows', '—')} | reminder mode {audit.get('reminder_mode', '—')}", '', 'RAM — источники:', f"anon {memroll.get('anonymous_mb', '—')} MB | private dirty {memroll.get('private_dirty_mb', '—')} MB | shared clean {memroll.get('shared_clean_mb', '—')} MB", f"cgroup: anon {cgroup_stat.get('anon_mb', '—')} | file {cgroup_stat.get('file_mb', '—')} | shmem {cgroup_stat.get('shmem_mb', '—')} | slab {cgroup_stat.get('slab_mb', '—')} | kernel {cgroup_stat.get('kernel_mb', '—')} MB", f"SQLite readers: pool {sqlite_readers.get('pool_size','—')} | avail {sqlite_readers.get('pool_available','—')} | touched threads {sqlite_readers.get('threads_seen','—')} | created {sqlite_readers.get('connections_created','—')} | cache {sqlite_readers.get('cache_kb_each','—')} KB/reader | timeouts {sqlite_readers.get('pool_timeouts','—')}", f"Cold fields: loaded {memstruct.get('cold_fields_loaded', '—')} | records {cold_by_key.get('records', 0)} | ARS {cold_by_key.get('ars_records', 0)} | USD {cold_by_key.get('usd_records', 0)} | secret {cold_by_key.get('secret_messages', 0)}", f"Cold keys: {cold_text}", f"RAM buffers: log {membuffers.get('fast_log', 0)} | R32 pending {membuffers.get('r32_events_pending', membuffers.get('r32_events', 0))} (q {membuffers.get('r32_events', 0)}/ov {membuffers.get('r32_events_overflow', 0)}) | diag {membuffers.get('r45_diag', 0)} | short-cb {membuffers.get('short_callbacks', 0)} | jobs {membuffers.get('file_jobs_state', 0)}", '', 'BOOT / Telegram gate:', f"Restore: attempted={st.get('restore_attempted')} ok={st.get('restore_ok')} | {str(st.get('restore_detail') or '—')[:220]}", f"Recovery: start {st.get('task_recovery_started_at') or '—'} | finish {st.get('task_recovery_finished_at') or '—'} | осталось {st.get('task_recovery_remaining', 0)}", f"Webhook получено: {st.get('webhook_received', 0)}", f"Последний: {st.get('last_webhook_at') or '—'} | {st.get('last_webhook_type') or '—'} | update {st.get('last_webhook_update_id') or '—'} | chat {st.get('last_webhook_chat_id') or '—'}", f"Отклонено BOOT: {st.get('webhook_blocked_boot', 0)} | SHUTDOWN: {st.get('webhook_blocked_shutdown', 0)}", '', 'Очереди P/A | done err rej | max wait:']
     if isinstance(restore_trace, dict) and restore_trace:
         lines.extend([
             '', 'RESTORE TRACE R68:',
@@ -24962,10 +25097,10 @@ _EXPENSE_INBOX_LOCK = threading.RLock()
 _FINANCE_INTEGRITY_LOCK = threading.RLock()
 _FINANCE_CACHE_LOCK = threading.RLock()
 _SECURITY_BREAKER_LOCK = threading.RLock()
-_OPERATION_KEEP = 400
-_OPERATION_RECENT_KEEP = 100
-_FINANCE_INTEGRITY_KEEP = max(400, min(2000, int(os.getenv('FINANCE_INTEGRITY_KEEP', '800') or '800')))
-_EXPENSE_DRAFT_KEEP = 300
+_OPERATION_KEEP = max(80, min(400, int(os.getenv('OPERATION_LEDGER_KEEP', '160') or '160')))
+_OPERATION_RECENT_KEEP = max(40, min(100, int(os.getenv('OPERATION_RECENT_KEEP', '60') or '60')))
+_FINANCE_INTEGRITY_KEEP = max(100, min(1000, int(os.getenv('FINANCE_INTEGRITY_KEEP', '180') or '180')))
+_EXPENSE_DRAFT_KEEP = max(80, min(300, int(os.getenv('EXPENSE_DRAFT_KEEP', '160') or '160')))
 _PROCESS_RECENT_KEEP = 80
 _FINANCE_VIEW_CACHE = {}
 _PROCESS_RUNTIME = {'active': {}, 'recent': deque(maxlen=_PROCESS_RECENT_KEEP)}
@@ -25931,8 +26066,9 @@ def finance_cache_get(key, builder, ttl: float=20.0):
     value = builder()
     with _FINANCE_CACHE_LOCK:
         _FINANCE_VIEW_CACHE[key] = {'created': now_m, 'value': copy.deepcopy(value)}
-        if len(_FINANCE_VIEW_CACHE) > 400:
-            oldest = sorted(_FINANCE_VIEW_CACHE.items(), key=lambda x: float((x[1] or {}).get('created') or 0))[:100]
+        _finance_cache_max = max(40, min(400, int(os.getenv('FINANCE_VIEW_CACHE_MAX', '96') or '96')))
+        if len(_FINANCE_VIEW_CACHE) > _finance_cache_max:
+            oldest = sorted(_FINANCE_VIEW_CACHE.items(), key=lambda x: float((x[1] or {}).get('created') or 0))[:max(1, len(_FINANCE_VIEW_CACHE) - _finance_cache_max)]
             for old_key, _ in oldest:
                 _FINANCE_VIEW_CACHE.pop(old_key, None)
     return value
@@ -26715,7 +26851,7 @@ MEMORY_EMERGENCY_MB = _memory_env_float('MEMORY_EMERGENCY_MB', 395.0, MEMORY_CRI
 MEMORY_HEAVY_BLOCK_MB = _memory_env_float('MEMORY_HEAVY_BLOCK_MB', 360.0, MEMORY_HIGH_MB, 4096.0)
 MEMORY_TRIM_COOLDOWN_SECONDS = _memory_env_float('MEMORY_TRIM_COOLDOWN_SECONDS', 45.0, 5.0, 600.0)
 MEMORY_EVENT_KEEP = _memory_env_int('MEMORY_EVENT_KEEP', 200, 50, 1000)
-MEMORY_SAFE_RESTART_ENABLED = str(os.getenv('MEMORY_SAFE_RESTART_ENABLED', '0') or '0').strip().lower() in {'1', 'true', 'on', 'yes'}
+MEMORY_SAFE_RESTART_ENABLED = False  # OCH13.3: Render Free local SQLite is ephemeral; never auto-restart for RAM
 MEMORY_SAFE_RESTART_MB = _memory_env_float('MEMORY_SAFE_RESTART_MB', 455.0, MEMORY_EMERGENCY_MB, 4096.0)
 MEMORY_SAFE_RESTART_MIN_UPTIME = _memory_env_float('MEMORY_SAFE_RESTART_MIN_UPTIME', 1800.0, 300.0, 86400.0)
 _MEMORY_LOCK = threading.RLock()
@@ -26972,6 +27108,60 @@ def _memory_compact_logs(level: str):
     except Exception:
         pass
 
+def _ochnis133_memory_compact_runtime(level: str='warning') -> dict:
+    """Bound non-business runtime rings/maps. Never deletes finance history."""
+    out={}
+    try:
+        with _OPERATION_LOCK:
+            root=_operation_root(); before=len(root.get('order') or [])
+            _operation_trim_locked(root); out['operations']=(before,len(root.get('order') or []))
+    except Exception:
+        pass
+    try:
+        with _FINANCE_INTEGRITY_LOCK:
+            root=_integrity_root(); before=len(root.get('events') or [])
+            if before>_FINANCE_INTEGRITY_KEEP: root['events']=root['events'][-_FINANCE_INTEGRITY_KEEP:]
+            out['integrity']=(before,len(root.get('events') or []))
+    except Exception:
+        pass
+    try:
+        with _FORWARD_OUTCOME_LOCK:
+            before=len(_FORWARD_OUTCOMES); _forward_outcome_prune_locked(); out['forward_outcomes']=(before,len(_FORWARD_OUTCOMES))
+    except Exception:
+        pass
+    try:
+        max_cb=max(256,min(int(globals().get('SHORT_CALLBACK_LOCAL_HOT_MAX_V248') or 1024),1024 if level in {'warning','high'} else 512))
+        lock=globals().get('_short_callback_lock'); store=globals().get('_short_callback_store')
+        if isinstance(store,dict):
+            if lock is not None: lock.acquire()
+            try:
+                before=len(store)
+                if before>max_cb:
+                    ordered=sorted(store.items(), key=lambda kv: float((kv[1] or {}).get('ts') or 0.0), reverse=True)
+                    keep={k for k,_ in ordered[:max_cb]}
+                    for k in list(store):
+                        if k not in keep: store.pop(k,None)
+                out['short_callbacks']=(before,len(store))
+            finally:
+                if lock is not None: lock.release()
+    except Exception:
+        pass
+    return out
+
+def _ochnis133_reap_idle_mega_children() -> dict:
+    """Zero-resident MEGAcmd enforcement. Never touches an active MEGA command."""
+    try:
+        busy_fn=globals().get('_och1210_mega_busy')
+        if callable(busy_fn) and bool(busy_fn()): return {'skipped':'busy'}
+        children=[x for x in _memory_child_processes() if str(x.get('name') or '') in {'mega-cmd-server','mega-exec'}]
+        if not children: return {'children':0}
+        release=globals().get('_och1224_hard_release_mega_runtime')
+        if callable(release):
+            out=release() or {}; out['seen']=len(children); return out
+    except Exception as exc:
+        return {'error':str(exc)[:160]}
+    return {'skipped':'release_unavailable'}
+
 def memory_trim(reason: str='manual', level: str | None=None, force: bool=False) -> dict:
     now_m = time.monotonic()
     with _MEMORY_LOCK:
@@ -27001,6 +27191,10 @@ def memory_trim(reason: str='manual', level: str | None=None, force: bool=False)
         except Exception as exc:
             _memory_emit('memory_lowram_flush_error', {'reason': reason, 'error': str(exc)[:300]}, 'WARN')
     _memory_compact_logs(current_level)
+    try:
+        _ochnis133_memory_compact_runtime(current_level)
+    except Exception:
+        pass
     # OCH12.24: before considering a restart, reclaim optional MEGAcmd children.
     # Never kill an active MEGA operation; zero-resident cleanup only runs when quiet.
     if current_level in {'high', 'critical', 'emergency'}:
@@ -27280,6 +27474,10 @@ def memory_guard_tick():
         python_rss = float(snap.get('python_rss_mb') or snap.get('rss_mb') or 0.0)
         if python_rss >= MEMORY_SOFT_TRIM_MB and level == 'normal':
             memory_trim('guard:soft', level='normal', force=False)
+        try:
+            _ochnis133_reap_idle_mega_children()
+        except Exception:
+            pass
         if level in {'warning', 'high', 'critical', 'emergency'}:
             memory_trim(f'guard:{level}', level=level, force=level == 'emergency')
         if level == 'emergency':
@@ -27304,6 +27502,10 @@ def start_memory_runtime_schedulers():
         _MEMORY_STATE['started'] = True
     _memory_emit('memory_guard_started', {'interval': MEMORY_GUARD_INTERVAL_SECONDS, 'thresholds': {'warning': MEMORY_WARNING_MB, 'high': MEMORY_HIGH_MB, 'critical': MEMORY_CRITICAL_MB, 'emergency': MEMORY_EMERGENCY_MB}, 'thread_stack_kb': globals().get('_BOT_THREAD_STACK_KB'), 'env_overrides': _memory_worker_environment()})
     DELAYED_SCHEDULER.schedule('memory-guard', 5.0, memory_guard_tick)
+    try:
+        DELAYED_SCHEDULER.schedule('removed-chat-ram-gc-sweep', 20.0, _ochnis133_removed_chat_sweep)
+    except Exception:
+        pass
     return True
 
 # --- ИСТОЧНИК: 20_callback_tokens.py ---
@@ -34014,8 +34216,14 @@ def _finance_source_index_v257(store: dict) -> dict:
 
 
 def _record_message_ids_v257(rec: dict) -> set[int]:
+    """Return message ids that are LOCAL to the record's current Telegram chat.
+
+    OCHNIS 13.2: source_order_msg_id / forward_source_msg_id belong to the origin
+    chat for forwarded finance and must never participate in destination lookup.
+    Mixing those namespaces caused restored records to shadow new Telegram messages.
+    """
     out = set()
-    for key in ('forward_dst_msg_id', 'source_msg_id', 'origin_msg_id', 'msg_id', 'source_order_msg_id'):
+    for key in ('forward_dst_msg_id', 'source_msg_id', 'origin_msg_id', 'msg_id'):
         try:
             value = int((rec or {}).get(key) or 0)
             if value: out.add(value)
@@ -34023,8 +34231,11 @@ def _record_message_ids_v257(rec: dict) -> set[int]:
             pass
     try:
         op = str((rec or {}).get('operation_key') or '')
-        m = re.fullmatch(r'finance:-?\d+:[^:]+:(\d+)', op)
+        m = re.fullmatch(r'finance2:\d+:-?\d+:[^:]+:(\d+)', op)
         if m: out.add(int(m.group(1)))
+        else:
+            m = re.fullmatch(r'finance:-?\d+:[^:]+:(\d+)', op)
+            if m: out.add(int(m.group(1)))
     except Exception:
         pass
     return out
@@ -34084,9 +34295,13 @@ def find_record_by_message_id(chat_id: int, msg_id: int):
     for key, r in _finance_record_lists(store):
         try:
             if uid and str(r.get('record_uid') or '').strip().upper() == uid:
-                _remember_finance_source_identity_v257(cid, r, mid, key); return r
+                if _record_has_message_id(r, mid):
+                    _remember_finance_source_identity_v257(cid, r, mid, key); return r
+                _finance_source_index_v257(store).pop(str(mid), None)
             if rid and key == ledger and int(r.get('id') or 0) == rid:
-                _remember_finance_source_identity_v257(cid, r, mid, key); return r
+                if _record_has_message_id(r, mid):
+                    _remember_finance_source_identity_v257(cid, r, mid, key); return r
+                _finance_source_index_v257(store).pop(str(mid), None)
         except Exception:
             pass
     return None
@@ -34181,10 +34396,12 @@ def _v212_task_reconcile_forward_copy(dst_chat_id: int, dst_msg_id: int, source_
         return None
 
 def _v260_forward_finance_op_key(source_chat_id: int, source_msg_id: int, dst_chat_id: int) -> str:
-    return f"{int(source_chat_id)}:{int(source_msg_id)}:{int(dst_chat_id)}"
+    # OCHNIS 13.2: private-chat ids/message ids can overlap between different bots.
+    return f"{int(_current_bot_id_for_forwarding() or 0)}:{int(source_chat_id)}:{int(source_msg_id)}:{int(dst_chat_id)}"
 
 def _v260_forward_finance_operation_key(source_chat_id: int, source_msg_id: int, dst_chat_id: int) -> str:
-    return f"fwd-fin:{int(source_chat_id)}:{int(source_msg_id)}:{int(dst_chat_id)}"
+    bot_id = int(_current_bot_id_for_forwarding() or 0)
+    return f"fwd-fin2:{bot_id}:{int(source_chat_id)}:{int(source_msg_id)}:{int(dst_chat_id)}"
 
 def _v260_forward_finance_op_get(source_chat_id: int, source_msg_id: int, dst_chat_id: int) -> dict:
     try:
@@ -34209,34 +34426,47 @@ def _v260_forward_finance_op_mark(source_chat_id: int, source_msg_id: int, dst_c
     return row
 
 def _v260_find_forward_finance_record(dst_chat_id: int, dst_msg_id: int, source_msg=None):
+    """Resolve finance-forward record without crossing Telegram message-id namespaces.
+
+    OCHNIS 13.2: origin identity is authoritative. Destination message_id is only a
+    final local fallback and cannot by itself bind a restored record from another bot.
+    """
+    dst_chat_id = int(dst_chat_id); dst_msg_id = int(dst_msg_id)
+    if source_msg is not None:
+        try:
+            src_chat_id = int(getattr(getattr(source_msg, 'chat', None), 'id', 0) or getattr(source_msg, 'forward_source_chat_id', 0) or 0)
+            src_msg_id = int(getattr(source_msg, 'forward_source_msg_id', 0) or getattr(source_msg, 'message_id', 0) or 0)
+        except Exception:
+            src_chat_id = src_msg_id = 0
+        if src_chat_id and src_msg_id:
+            op_key = _v260_forward_finance_operation_key(src_chat_id, src_msg_id, dst_chat_id)
+            try:
+                rec = find_record_by_operation_key(dst_chat_id, op_key)
+                if isinstance(rec, dict) and _och132_forward_record_matches_source(rec, source_msg, dst_chat_id, dst_msg_id):
+                    return rec
+            except Exception:
+                pass
+            try:
+                for _ledger, rec in _finance_record_lists(dst_chat_id):
+                    if not isinstance(rec, dict):
+                        continue
+                    if int(rec.get('forward_source_chat_id') or 0) != src_chat_id or int(rec.get('forward_source_msg_id') or 0) != src_msg_id:
+                        continue
+                    if _och132_forward_record_matches_source(rec, source_msg, dst_chat_id, dst_msg_id):
+                        return rec
+            except Exception:
+                pass
     try:
-        rec = find_record_by_message_id(int(dst_chat_id), int(dst_msg_id))
+        rec = find_record_by_message_id(dst_chat_id, dst_msg_id)
         if isinstance(rec, dict):
-            return rec
-    except Exception:
-        pass
-    if source_msg is None:
-        return None
-    try:
-        src_chat_id = int(getattr(getattr(source_msg, 'chat', None), 'id', 0) or 0)
-        src_msg_id = int(getattr(source_msg, 'forward_source_msg_id', 0) or getattr(source_msg, 'message_id', 0) or 0)
-    except Exception:
-        return None
-    if not src_chat_id or not src_msg_id:
-        return None
-    op_key = _v260_forward_finance_operation_key(src_chat_id, src_msg_id, int(dst_chat_id))
-    try:
-        rec = find_record_by_operation_key(int(dst_chat_id), op_key)
-        if isinstance(rec, dict):
-            return rec
-    except Exception:
-        pass
-    try:
-        for _ledger, rec in _finance_record_lists(int(dst_chat_id)):
-            if not isinstance(rec, dict):
-                continue
-            if int(rec.get('forward_source_chat_id') or 0) == src_chat_id and int(rec.get('forward_source_msg_id') or 0) == src_msg_id:
+            if source_msg is None:
                 return rec
+            if _och132_forward_record_matches_source(rec, source_msg, dst_chat_id, dst_msg_id):
+                return rec
+            try:
+                bot_journal('finance_forward_message_id_collision_och132', dst_chat_id, f'dst_msg={dst_msg_id}; old_day={rec.get("day_key")}; old_op={rec.get("operation_key")}', 'WARN')
+            except Exception:
+                pass
     except Exception:
         pass
     return None
@@ -34253,6 +34483,7 @@ def _v260_bind_forward_finance_record(rec: dict, source_msg, dst_chat_id: int, d
         return rec
     rec.update({
         'forwarded_by_bot': True,
+        'telegram_bot_id': int(_current_bot_id_for_forwarding() or 0),
         'forward_source_chat_id': src_chat_id,
         'forward_source_msg_id': src_msg_id,
         'forward_dst_chat_id': int(dst_chat_id),
@@ -44666,13 +44897,168 @@ try:
 except Exception:
     pass
 
+# OCHNIS 13.2 — finance identity is bot-scoped and namespace-safe after restore.
+def _och132_current_bot_id() -> int:
+    try:
+        return int(_current_bot_id_for_forwarding() or 0)
+    except Exception:
+        return 0
+
+
+def _och132_iso_epoch(value) -> float:
+    if value is None:
+        return 0.0
+    try:
+        if isinstance(value, (int, float)):
+            return float(value)
+        txt = str(value or '').strip().replace('Z', '+00:00')
+        if not txt:
+            return 0.0
+        dt = datetime.fromisoformat(txt)
+        if dt.tzinfo is None:
+            try: dt = dt.replace(tzinfo=now_local().tzinfo)
+            except Exception: pass
+        return float(dt.timestamp())
+    except Exception:
+        return 0.0
+
+
+def _och132_message_epoch(msg) -> float:
+    try:
+        value = getattr(msg, 'date', None)
+        if hasattr(value, 'timestamp'):
+            return float(value.timestamp())
+        return float(value or 0)
+    except Exception:
+        return 0.0
+
+
+def _och132_record_text(rec: dict) -> str:
+    try:
+        raw = str((rec or {}).get('source_finance_text') or '').strip()
+        if raw:
+            return sanitize_telegram_inserted_text(raw).strip()
+    except Exception:
+        pass
+    try:
+        fn = globals().get('_v262_record_canonical_text')
+        if callable(fn):
+            return sanitize_telegram_inserted_text(str(fn(rec) or '')).strip()
+    except Exception:
+        pass
+    return ''
+
+
+def _och132_message_text(msg) -> str:
+    try:
+        return sanitize_telegram_inserted_text(str(_message_text_for_finance(msg) or getattr(msg, 'caption', None) or getattr(msg, 'text', None) or '')).strip()
+    except Exception:
+        return str(getattr(msg, 'text', '') or '').strip()
+
+
+def _och132_local_message_match(rec: dict, msg_id: int) -> bool:
+    if not isinstance(rec, dict):
+        return False
+    try: mid = int(msg_id or 0)
+    except Exception: return False
+    if not mid:
+        return False
+    # source_order_msg_id and forward_source_msg_id are intentionally excluded.
+    for key in ('forward_dst_msg_id', 'source_msg_id', 'origin_msg_id', 'msg_id'):
+        try:
+            if int(rec.get(key) or 0) == mid:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _och132_incoming_record_matches(rec: dict, msg, chat_id: int) -> bool:
+    """True only when a stored row is proven to be this bot's exact incoming message."""
+    if not isinstance(rec, dict) or msg is None:
+        return False
+    try:
+        mid = int(getattr(msg, 'message_id', 0) or 0)
+    except Exception:
+        return False
+    if not _och132_local_message_match(rec, mid):
+        return False
+    # A forwarded destination row can never shadow a new direct finance message.
+    if bool(rec.get('forwarded_by_bot')) or rec.get('forward_source_chat_id') or rec.get('forward_source_msg_id'):
+        return False
+    current_bot = _och132_current_bot_id()
+    stored_bot = 0
+    try: stored_bot = int(rec.get('telegram_bot_id') or 0)
+    except Exception: stored_bot = 0
+    if stored_bot:
+        return bool(not current_bot or stored_bot == current_bot)
+    # Legacy row without bot id: adopt it only with strong historical proof.
+    rec_ts = _och132_iso_epoch(rec.get('timestamp'))
+    msg_ts = _och132_message_epoch(msg)
+    if rec_ts and msg_ts and abs(rec_ts - msg_ts) <= 3.0:
+        old_text = _och132_record_text(rec)
+        new_text = _och132_message_text(msg)
+        if old_text and new_text and old_text == new_text:
+            rec['telegram_bot_id'] = current_bot
+            try: rec['operation_key'] = finance_operation_key(int(chat_id), mid, 'main')
+            except Exception: pass
+            return True
+    return False
+
+
+def _och132_find_incoming_record(chat_id: int, msg):
+    try:
+        mid = int(getattr(msg, 'message_id', 0) or 0)
+    except Exception:
+        return None
+    if not mid:
+        return None
+    try:
+        for _ledger, rec in _finance_record_lists(int(chat_id)):
+            if _och132_incoming_record_matches(rec, msg, int(chat_id)):
+                return rec
+    except Exception:
+        pass
+    return None
+
+
+def _och132_forward_record_matches_source(rec: dict, source_msg, dst_chat_id: int, dst_msg_id: int) -> bool:
+    if not isinstance(rec, dict) or source_msg is None:
+        return False
+    try:
+        src_chat = int(getattr(getattr(source_msg, 'chat', None), 'id', 0) or getattr(source_msg, 'forward_source_chat_id', 0) or 0)
+        src_mid = int(getattr(source_msg, 'forward_source_msg_id', 0) or getattr(source_msg, 'message_id', 0) or 0)
+    except Exception:
+        return False
+    if not src_chat or not src_mid:
+        return False
+    if int(rec.get('forward_source_chat_id') or 0) != src_chat or int(rec.get('forward_source_msg_id') or 0) != src_mid:
+        return False
+    current_bot = _och132_current_bot_id()
+    try: stored_bot = int(rec.get('telegram_bot_id') or 0)
+    except Exception: stored_bot = 0
+    if stored_bot:
+        return bool(not current_bot or stored_bot == current_bot)
+    # Legacy current-bot row: destination-local id + near-identical source time is enough to migrate.
+    if not _och132_local_message_match(rec, int(dst_msg_id)):
+        return False
+    rec_ts = _och132_iso_epoch(rec.get('timestamp'))
+    msg_ts = _och132_message_epoch(source_msg)
+    if rec_ts and msg_ts and abs(rec_ts - msg_ts) <= 3.0:
+        rec['telegram_bot_id'] = current_bot
+        try: rec['operation_key'] = _v260_forward_finance_operation_key(src_chat, src_mid, int(dst_chat_id))
+        except Exception: pass
+        return True
+    return False
+
+
 def finance_operation_key(chat_id: int, source_msg_id, ledger: str='main') -> str:
-    """Stable idempotency key for a finance effect created from a Telegram message."""
+    """Bot-scoped idempotency key for one Telegram finance effect (OCHNIS 13.2)."""
     try:
         mid = int(source_msg_id)
     except Exception:
         return ''
-    return f"finance:{int(chat_id)}:{str(ledger or 'main')}:{mid}"
+    return f"finance2:{_och132_current_bot_id()}:{int(chat_id)}:{str(ledger or 'main')}:{mid}"
 
 def find_record_by_operation_key(chat_id: int, operation_key: str):
     if not operation_key:
@@ -44726,25 +45112,22 @@ def _finance_add_record_base(chat_id: int, amount: float, note: str, owner: int,
                     _r49_defer_operation_complete(op_id, 'duplicate blocked by stable operation key; existing record reused')
                 return existing_op
         if source_msg_id is not None:
-            existing_any = find_record_by_message_id(int(chat_id), int(source_msg_id)) if 'find_record_by_message_id' in globals() else None
+            existing_any = _och132_find_incoming_record(int(chat_id), source_msg) if source_msg is not None else None
             if isinstance(existing_any, dict):
                 if '_remember_finance_source_identity_v257' in globals():
                     _remember_finance_source_identity_v257(int(chat_id), existing_any, int(source_msg_id), 'records')
-                bot_journal('finance_duplicate_blocked_v257', chat_id, f'source_msg_id={source_msg_id} operation_key={operation_key}; central=1')
+                bot_journal('finance_duplicate_blocked_och132', chat_id, f'source_msg_id={source_msg_id} operation_key={operation_key}; bot_scoped=1')
                 if op_id and 'operation_complete' in globals():
-                    _r49_defer_operation_complete(op_id, 'duplicate blocked by stable source identity; existing record reused')
+                    _r49_defer_operation_complete(op_id, 'duplicate blocked by proven bot-scoped source identity; existing record reused')
                 return existing_any
-            for existing in store.get('records', []) or []:
-                if not isinstance(existing, dict):
-                    continue
-                if operation_key and str(existing.get('operation_key') or '') == operation_key or int(existing.get('source_msg_id') or 0) == int(source_msg_id):
-                    if operation_key and (not existing.get('operation_key')):
-                        existing['operation_key'] = operation_key
-                    bot_journal('finance_duplicate_blocked', chat_id, f'source_msg_id={source_msg_id} operation_key={operation_key}')
-                    if op_id and 'operation_complete' in globals():
-                        _r49_defer_operation_complete(op_id, 'duplicate blocked; existing record reused')
-                    return existing
-        rec = {'id': rid, 'short_id': '', 'timestamp': message_timestamp_iso(source_msg), 'amount': amount, 'note': note, 'source_msg_id': source_msg_id, 'source_order_msg_id': source_order_msg_id, 'owner': owner, 'msg_id': source_msg_id, 'origin_msg_id': source_msg_id, 'day_key': day_key, 'operation_key': operation_key}
+            # A same numeric message_id from a restored/other-bot database is NOT a duplicate.
+            try:
+                collision = find_record_by_message_id(int(chat_id), int(source_msg_id))
+                if isinstance(collision, dict):
+                    bot_journal('finance_message_id_collision_och132', chat_id, f'source_msg_id={source_msg_id}; old_day={collision.get("day_key")}; old_op={collision.get("operation_key")}', 'WARN')
+            except Exception:
+                pass
+        rec = {'id': rid, 'short_id': '', 'timestamp': message_timestamp_iso(source_msg), 'amount': amount, 'note': note, 'source_msg_id': source_msg_id, 'source_order_msg_id': source_order_msg_id, 'owner': owner, 'msg_id': source_msg_id, 'origin_msg_id': source_msg_id, 'day_key': day_key, 'operation_key': operation_key, 'telegram_bot_id': int(_och132_current_bot_id() or 0)}
         if source_msg is not None:
             for _attr, _field in (('forward_source_chat_id','forward_source_chat_id'), ('forward_source_msg_id','forward_source_msg_id'), ('forward_dst_chat_id','forward_dst_chat_id'), ('forward_dst_msg_id','forward_dst_msg_id')):
                 try:
@@ -86420,7 +86803,13 @@ def _v262_origin_tuple_from_key(value):
 
 def _v262_origin_tuple_from_operation(value):
     op = str(value or '').strip()
+    m = _v262_re.fullmatch(r'fwd-fin2:\d+:(-?\d+):(\d+):-?\d+', op)
+    if m:
+        return (int(m.group(1)), int(m.group(2)))
     m = _v262_re.fullmatch(r'fwd-fin:(-?\d+):(\d+):-?\d+', op)
+    if m:
+        return (int(m.group(1)), int(m.group(2)))
+    m = _v262_re.fullmatch(r'finance2:\d+:(-?\d+):[^:]+:(\d+)', op)
     if m:
         return (int(m.group(1)), int(m.group(2)))
     m = _v262_re.fullmatch(r'finance:(-?\d+):[^:]+:(\d+)', op)
@@ -86488,7 +86877,7 @@ def _v258_record_strong_keys(rec: dict, chat_id: int) -> list[str]:
         pass
     try:
         op = str((rec or {}).get('operation_key') or '').strip()
-        if op.startswith('fwd-fin:'):
+        if op.startswith(('fwd-fin:', 'fwd-fin2:')):
             out.append('op:' + op)
     except Exception:
         pass
@@ -92443,16 +92832,16 @@ except Exception:
 import time as _r32_time
 
 _R32_EVENT_STREAM_ENABLED = str(_r32_os.getenv('R32_EVENT_STREAM_ENABLED','1') or '1').strip().lower() in {'1','true','yes','on','да'}
-_R32_EVENT_Q = _r32_queue.Queue(maxsize=max(1000,min(50000,int(_r32_os.getenv('R32_EVENT_QUEUE_MAX','20000') or '20000'))))
+_R32_EVENT_Q = _r32_queue.Queue(maxsize=max(256,min(5000,int(_r32_os.getenv('R32_EVENT_QUEUE_MAX','768') or '768'))))
 # OCH12.27: queue contains logical keys, not duplicate descriptors.  Repeated
 # save_chat/set_cold for the same key are latest-wins before materialization.
 _R32_EVENT_PENDING_LOCK=_r32_threading.RLock()
 _R32_EVENT_PENDING={}
 _R32_EVENT_OVERFLOW_ORDER={}
 try:
-    _R32_EVENT_COALESCE_MAX=max(1200,min(20000,int(_r32_os.getenv('R32_EVENT_COALESCE_MAX','4096') or '4096')))
+    _R32_EVENT_COALESCE_MAX=max(256,min(5000,int(_r32_os.getenv('R32_EVENT_COALESCE_MAX','768') or '768')))
 except Exception:
-    _R32_EVENT_COALESCE_MAX=4096
+    _R32_EVENT_COALESCE_MAX=768
 try:
     _R32_EVENT_FULL_LOG_SEC=max(10.0,min(600.0,float(_r32_os.getenv('R32_EVENT_QUEUE_FULL_LOG_SEC','60') or '60')))
 except Exception:
@@ -96710,7 +97099,7 @@ import time as _r74_time
 
 _R74_RUNTIME_PARTS = ('runtime_flat.py',)
 _R74_MODULE_PURPOSE = {
-    'runtime_flat.py': 'очнись_13: выпрямленный production runtime; исторические source/owner-каталоги собраны до deploy',
+    'runtime_flat.py': 'очнись_13.3: выпрямленный production runtime; identity-safe finance after restore',
 }
 
 
@@ -99012,7 +99401,7 @@ def _och129_finance_record_text(rec: dict) -> str:
 
 
 def handle_finance_message(msg):
-    """Treat same chat/message identity after deploy as replay/edit, never a new operation."""
+    """OCHNIS 13.2: replay/edit detection is bot-scoped; numeric message_id alone is never proof."""
     try:
         cid = int(getattr(getattr(msg, 'chat', None), 'id', 0) or 0)
         mid = int(getattr(msg, 'message_id', 0) or 0)
@@ -99021,33 +99410,36 @@ def handle_finance_message(msg):
     if cid and mid:
         existing = None
         try:
-            existing = find_record_by_message_id(cid, mid)
+            existing = _och132_find_incoming_record(cid, msg)
         except Exception:
             existing = None
         if isinstance(existing, dict):
-            incoming = str(_message_text_for_finance(msg) or getattr(msg, 'caption', None) or getattr(msg, 'text', None) or '').strip().replace('\r\n', '\n').replace('\r', '\n')
+            incoming = _och132_message_text(msg).replace('\r\n', '\n').replace('\r', '\n')
             previous = _och129_finance_record_text(existing)
             if incoming != previous:
-                # A Telegram update can be replayed as a normal `message` after a deploy.
-                # Use the native linked-edit transaction, then repaint/reconcile old copies.
                 try:
                     edited = bool(handle_finance_edit(msg))
                 except Exception as exc:
                     edited = False
-                    try: log_error(f'[FIN EDIT V263] replay-as-message edit failed {cid}:{mid}: {exc}')
+                    try: log_error(f'[FIN EDIT OCH132] replay-as-message edit failed {cid}:{mid}: {exc}')
                     except Exception: pass
                 if edited:
                     try: schedule_propagate_edited_to_copies(msg)
                     except Exception: pass
-                    try: bot_journal('finance_message_reclassified_as_edit_v263', cid, f'msg={mid}; old={previous[:120]!r}; new={incoming[:120]!r}')
+                    try: bot_journal('finance_message_reclassified_as_edit_och132', cid, f'msg={mid}; bot={_och132_current_bot_id()}')
                     except Exception: pass
                     return True
-            # Identical redelivery: stable source identity is authoritative; no new row.
             try:
-                bot_journal('finance_message_replay_blocked_v263', cid, f'msg={mid}; identical={int(incoming == previous)}')
+                bot_journal('finance_message_replay_blocked_och132', cid, f'msg={mid}; bot={_och132_current_bot_id()}; identical={int(incoming == previous)}')
             except Exception:
                 pass
             return True
+        try:
+            naked = find_record_by_message_id(cid, mid)
+            if isinstance(naked, dict):
+                bot_journal('finance_message_id_collision_passed_och132', cid, f'msg={mid}; old_day={naked.get("day_key")}; old_op={naked.get("operation_key")}', 'WARN')
+        except Exception:
+            pass
     if callable(_OCH129_PARENT_HANDLE_FINANCE_MESSAGE):
         return _OCH129_PARENT_HANDLE_FINANCE_MESSAGE(msg)
     return False
@@ -99335,6 +99727,17 @@ def _och1224_hard_release_mega_runtime() -> dict:
                 pass
         if survivors:
             _split_time.sleep(0.05)
+        # OCH13.3: completed MEGAcmd children may remain as zero-RSS zombies until
+        # explicitly reaped.  Do this only after the transaction manager declared
+        # MEGA idle, so we never steal waitpid from an active subprocess command.
+        reaped=0
+        for pid in victims:
+            try:
+                got,_status=_split_os.waitpid(pid, _split_os.WNOHANG)
+                if got==pid: reaped+=1
+            except Exception:
+                pass
+        out['reaped']=reaped
         out['survivors'] = sum(1 for pid in survivors if _alive_non_zombie(pid))
     except Exception as exc:
         out['error'] = f'{type(exc).__name__}: {str(exc)[:160]}'
@@ -100437,3 +100840,43 @@ except Exception as _och13_exc:
     _SPLIT_STATE['och13_mode'] = 'STANDALONE_R1'
     try: log_error(f'OCH13 init: {_och13_exc}')
     except Exception: pass
+
+
+# OCHNIS 13.2 release marker / lazy finance identity repair.
+def _och132_sanitize_loaded_finance_indexes() -> int:
+    cleaned = 0
+    try:
+        chats = (data or {}).get('chats', {}) or {}
+        for raw_cid, store in list(chats.items()):
+            if not isinstance(store, dict):
+                continue
+            idx = store.get('_finance_source_index_v257')
+            if not isinstance(idx, dict) or not idx:
+                continue
+            try: cid = int(raw_cid)
+            except Exception: continue
+            for raw_mid in list(idx.keys()):
+                try: mid = int(raw_mid)
+                except Exception:
+                    idx.pop(raw_mid, None); cleaned += 1; continue
+                valid = False
+                try:
+                    for _ledger, rec in _finance_record_lists(store):
+                        if _record_has_message_id(rec, mid):
+                            valid = True; break
+                except Exception:
+                    valid = True
+                if not valid:
+                    idx.pop(raw_mid, None); cleaned += 1
+        if cleaned:
+            bot_journal('finance_identity_index_cleaned_och132', int(OWNER_ID or 0), f'cleaned={cleaned}')
+    except Exception as exc:
+        try: log_error(f'OCH132 finance index sanitize: {exc}')
+        except Exception: pass
+    return cleaned
+
+try:
+    _och132_sanitize_loaded_finance_indexes()
+    bot_journal('och13_2_finance_identity_loaded', int(OWNER_ID or 0), 'bot-scoped finance identity; local/destination msg namespace separated; chat-probe network mutation disabled')
+except Exception:
+    pass
