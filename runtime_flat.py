@@ -1,5 +1,5 @@
 # OCHNIS_13 FLAT RUNTIME - generated from OCH12.36
-OCHNIS_RELEASE = "очнись_13.3"
+OCHNIS_RELEASE = "очнись_13.4"
 
 # ===== SOURCE 01_core_data.py =====
 # OCH12.34: infrastructure/wiring shell; business function bodies live only in 11-14 owner files.
@@ -2183,7 +2183,7 @@ RELEASE_SERIES = 'выс'
 RELEASE_NUMBER = 264
 VERSION = f'{RELEASE_SERIES}-{RELEASE_NUMBER}'
 BOT_FILE_NAME = os.path.basename(__file__) if '__file__' in globals() else 'bot_v130_modular_split.py'
-BOT_DISPLAY_NAME = 'очнись_13.3'
+BOT_DISPLAY_NAME = 'очнись_13.4'
 
 def _current_source_path() -> str:
     """Single-file path in legacy mode; reconstructed full source in modular mode."""
@@ -32427,95 +32427,6 @@ def handle_finance_text(msg):
         log_error(f'[FINANCE ADD ERROR] {describe_msg_for_log(msg)} amount={amount} note={note!r}: {e}')
         return False
 
-def handle_finance_edit(msg):
-    chat_id = msg.chat.id
-    try:
-        uid = int(getattr(getattr(msg, 'from_user', None), 'id', 0) or 0)
-        if 'v152_chat_permission_allowed' in globals() and '_v152_actor_is_platform_owner' in globals():
-            if not _v152_actor_is_platform_owner(uid) and (not v152_chat_permission_allowed(chat_id, 'finance.edit')):
-                try:
-                    send_and_auto_delete(chat_id, '⛔ Редактирование операций запрещено правами этого чата.', 8)
-                except Exception:
-                    pass
-                return False
-    except Exception:
-        pass
-    if globals().get('constitution_finance_write_blocked_v232') and constitution_finance_write_blocked_v232():
-        try:
-            if _v198_primary_owner_chat(chat_id):
-                send_and_auto_delete(chat_id, '🚨 DATA CONSTITUTION: финансовые изменения временно заблокированы. Используйте /data_constitution.', 20)
-            else:
-                send_owner_technical_alert('🚨 DATA CONSTITUTION: финансовые изменения временно заблокированы. Используйте /data_constitution.', 20, source_chat_id=chat_id)
-                send_plain_and_auto_delete(chat_id, '⏳ Финансовая запись временно отложена до восстановления данных.', 8)
-        except Exception:
-            pass
-        return True
-    text = (msg.text or msg.caption or '').strip()
-    store = get_chat_store(chat_id)
-    target = find_record_by_message_id(chat_id, int(msg.message_id)) if 'find_record_by_message_id' in globals() else None
-    if target is None:
-        for r in store.get('records', []):
-            try:
-                if any(int(r.get(k) or 0) == int(msg.message_id) for k in ('source_msg_id','origin_msg_id','msg_id','source_order_msg_id')):
-                    target = r
-                    break
-            except Exception:
-                continue
-    if isinstance(target, dict) and '_remember_finance_source_identity_v257' in globals():
-        _remember_finance_source_identity_v257(int(chat_id), target, int(msg.message_id), 'records')
-    if not target:
-        log_info(f'[EDIT-FIN] record not found for msg_id={msg.message_id}')
-        return False
-    if text and looks_like_amount(text):
-        try:
-            comp = parse_financial_components(text)
-            amount, note = (comp['amount'], comp['note'])
-        except Exception:
-            comp = {'usd_amount': 0.0, 'usd_note': '', 'usd_only': False}
-            amount, note = (0, 'удалено')
-    else:
-        comp = {'usd_amount': 0.0, 'usd_note': '', 'usd_only': False}
-        amount, note = (0, 'удалено')
-    _constitution_before = copy.deepcopy(target)
-    _next_source_text = str(comp.get('source_finance_text') or text)
-    _next_usd_amount = float(comp.get('usd_amount') or 0) if comp.get('usd_amount') is not None else 0.0
-    _next_usd_note = str(comp.get('usd_note') or '') if comp.get('usd_amount') is not None else ''
-    _next_usd_only = bool(comp.get('usd_only', False)) if comp.get('usd_amount') is not None else False
-    _same_edit = (
-        float(target.get('amount') or 0) == float(amount or 0)
-        and str(target.get('note') or '') == str(note or '')
-        and str(target.get('source_finance_text') or '') == _next_source_text
-        and float(target.get('usd_amount') or 0) == _next_usd_amount
-        and str(target.get('usd_note') or '') == _next_usd_note
-        and bool(target.get('usd_only', False)) == _next_usd_only
-    )
-    if _same_edit:
-        log_info(f"[EDIT-FIN] no-op duplicate R{target.get('id')} ARS={float(amount or 0)} USD={_next_usd_amount} note={note}")
-        return True
-    target['amount'] = amount
-    target['note'] = note
-    target['source_finance_text'] = _next_source_text
-    if comp.get('usd_amount') is not None:
-        target['usd_amount'] = float(comp.get('usd_amount') or 0)
-        target['usd_note'] = str(comp.get('usd_note') or '')
-        target['usd_only'] = bool(comp.get('usd_only', False))
-    elif target.get('usd_amount') is not None:
-        target['usd_amount'] = 0.0
-        target['usd_note'] = ''
-        target['usd_only'] = False
-    for day, arr in store.get('daily_records', {}).items():
-        for r in arr:
-            if r.get('id') == target.get('id'):
-                r.update(target)
-    store['balance'] = sum((r['amount'] for r in store.get('records', [])))
-    _snapshot_active_currency_ledger(store, _ensure_currency_ledgers(store))
-    log_info(f"[EDIT-FIN] updated record R{target['id']} ARS={float(amount or 0)} USD={float(target.get('usd_amount') or 0)} usd_only={bool(target.get('usd_only', False))} note={note}")
-    save_data(data, chat_ids=[int(chat_id)])
-    try:
-        finance_integrity_append(int(chat_id), 'edit', target, details={'before': _constitution_before, 'source': 'telegram_edited_message'})
-    except Exception as _constitution_edit_exc:
-        log_error(f'DATA CONSTITUTION edited finance ledger: {_constitution_edit_exc}')
-    return True
 
 
 def sync_forwarded_finance_message(dst_chat_id: int, dst_msg_id: int, text: str, owner: int=0, source_msg=None):
@@ -34165,9 +34076,6 @@ def _rebuild_forward_index_from_finance_records(d: dict) -> int:
         log_error(f'_rebuild_forward_index_from_finance_records: {e}')
         return 0
 
-def get_forward_links(src_chat_id: int, src_msg_id: int):
-    with forward_map_lock:
-        return list(forward_map.get((int(src_chat_id), int(src_msg_id)), []))
 
 def delete_forward_copies_for_source(src_chat_id: int, src_msg_id: int):
     key = (int(src_chat_id), int(src_msg_id))
@@ -34471,30 +34379,6 @@ def _v260_find_forward_finance_record(dst_chat_id: int, dst_msg_id: int, source_
         pass
     return None
 
-def _v260_bind_forward_finance_record(rec: dict, source_msg, dst_chat_id: int, dst_msg_id: int) -> dict:
-    if not isinstance(rec, dict) or source_msg is None:
-        return rec
-    try:
-        src_chat_id = int(getattr(getattr(source_msg, 'chat', None), 'id', 0) or 0)
-        src_msg_id = int(getattr(source_msg, 'forward_source_msg_id', 0) or getattr(source_msg, 'message_id', 0) or 0)
-    except Exception:
-        return rec
-    if not src_chat_id or not src_msg_id:
-        return rec
-    rec.update({
-        'forwarded_by_bot': True,
-        'telegram_bot_id': int(_current_bot_id_for_forwarding() or 0),
-        'forward_source_chat_id': src_chat_id,
-        'forward_source_msg_id': src_msg_id,
-        'forward_dst_chat_id': int(dst_chat_id),
-        'forward_dst_msg_id': int(dst_msg_id),
-        'operation_key': _v260_forward_finance_operation_key(src_chat_id, src_msg_id, int(dst_chat_id)),
-    })
-    try:
-        _remember_finance_source_identity_v257(int(dst_chat_id), rec, int(dst_msg_id), 'records')
-    except Exception:
-        pass
-    return rec
 
 def _v260_make_forward_shadow(source_chat_id: int, source_msg_id: int, dst_chat_id: int, dst_msg_id: int, owner: int=0, source_date=None):
     chat = type('ForwardSourceChatV260', (), {'id': int(source_chat_id)})()
@@ -35100,182 +34984,6 @@ def _fallback_send_single(dst_chat_id: int, msg, reply_to_message_id=None):
         return _call_with_optional_reply(bot.send_poll, dst_chat_id, msg.poll.question, options, is_anonymous=getattr(msg.poll, 'is_anonymous', True), allows_multiple_answers=getattr(msg.poll, 'allows_multiple_answers', False), type=getattr(msg.poll, 'type', 'regular'), reply_to_message_id=reply_to_message_id)
     raise RuntimeError(f'Unsupported fallback content_type={ct}')
 
-def _forward_single_to_target(source_chat_id: int, msg, dst_chat_id: int, finance_enabled: bool, _migration_retry: bool=False):
-    try:
-        _src_mid_v260 = int(getattr(msg, 'message_id', 0) or 0)
-        for _existing_dst_chat, _existing_dst_mid in list(get_forward_links(int(source_chat_id), _src_mid_v260) or []):
-            if int(_existing_dst_chat) != int(dst_chat_id):
-                continue
-            if finance_enabled:
-                _txt_v260 = _message_text_for_finance(msg)
-                _owner_v260 = int(getattr(getattr(msg, 'from_user', None), 'id', 0) or 0)
-                _rec_v260 = sync_forwarded_finance_message(int(dst_chat_id), int(_existing_dst_mid), _txt_v260, _owner_v260, source_msg=msg) if _txt_v260 else None
-                if isinstance(_rec_v260, dict):
-                    _persist_forward_finance_delivery_now(int(source_chat_id), _src_mid_v260, int(dst_chat_id), int(_existing_dst_mid), _rec_v260)
-                elif _txt_v260 and text_has_any_digit(_txt_v260):
-                    _v260_schedule_finance_forward_repair(int(source_chat_id), _src_mid_v260, int(dst_chat_id), int(_existing_dst_mid), _txt_v260, _owner_v260, getattr(msg, 'date', None))
-            bot_journal('forward_duplicate_copy_blocked_v260', int(dst_chat_id), f'src={source_chat_id}:{_src_mid_v260}; reuse={dst_chat_id}:{_existing_dst_mid}')
-            return int(_existing_dst_mid)
-    except Exception as _v260_existing_exc:
-        try: log_error(f'[FWD V260] existing-link exact-once check: {_v260_existing_exc}')
-        except Exception: pass
-    try:
-        _forward_outcome_update(source_chat_id, int(getattr(msg, 'message_id', 0) or 0), state='dispatching', dst_chat_id=int(dst_chat_id), dst_state='attempted')
-    except Exception:
-        pass
-    reply_to_target_id = None
-    try:
-        reply_to_msg = getattr(msg, 'reply_to_message', None)
-        if reply_to_msg is not None:
-            reply_to_target_id = resolve_reply_target_message_id(source_chat_id, getattr(reply_to_msg, 'message_id', None), dst_chat_id)
-    except Exception as e:
-        log_error(f'_forward_single_to_target reply resolve {source_chat_id}->{dst_chat_id}: {e}')
-    pre_copy_markup = None
-    initial_slash_command = None
-    initial_slash_synced_rec = None
-    initial_slash_sent = False
-    text_for_finance = _message_text_for_finance(msg)
-    copy_edit_mode = 'normal'
-    try:
-        if finance_enabled:
-            copy_edit_mode = forward_copy_edit_mode(source_chat_id)
-            if copy_edit_mode == 'button':
-                pre_copy_markup = _forward_copy_edit_keyboard('button')
-    except Exception:
-        pre_copy_markup = None
-        copy_edit_mode = 'normal'
-    try:
-        use_initial_slash = False
-        try:
-            use_initial_slash = bool(finance_enabled and copy_edit_mode == 'slash' and (str(getattr(msg, 'content_type', '') or '') == 'text') and text_for_finance and is_finance_mode(int(dst_chat_id)) and looks_like_amount(text_for_finance))
-        except Exception:
-            use_initial_slash = False
-        if use_initial_slash:
-            with locked_chat(int(dst_chat_id)):
-                initial_slash_command = _predict_forward_copy_record_command(int(dst_chat_id), msg, text_for_finance)
-            if initial_slash_command:
-                display_text = (_strip_forward_copy_edit_command(text_for_finance) + '\n' + initial_slash_command).strip()
-                send_kwargs = {}
-                entities = getattr(msg, 'entities', None)
-                if entities: send_kwargs['entities'] = entities
-                if reply_to_target_id:
-                    send_kwargs['reply_to_message_id'] = int(reply_to_target_id); send_kwargs['allow_sending_without_reply'] = True
-                try:
-                    sent = _tg_call_retry(bot.send_message, int(dst_chat_id), display_text, purpose='forward_send_text_initial_slash', **send_kwargs)
-                except TypeError:
-                    send_kwargs.pop('allow_sending_without_reply', None); sent = _tg_call_retry(bot.send_message, int(dst_chat_id), display_text, purpose='forward_send_text_initial_slash', **send_kwargs)
-                dst_msg_id = int(sent.message_id); initial_slash_sent = True
-                _store_forward_link(source_chat_id, msg.message_id, dst_chat_id, dst_msg_id)
-                _forward_outcome_update(source_chat_id, int(msg.message_id), dst_chat_id=int(dst_chat_id), dst_state='delivered', dst_msg_id=int(dst_msg_id))
-                try:
-                    _persist_forward_index_in_data(data); save_data(data, root_only=True)
-                except Exception as e:
-                    log_error(f'[FORWARD LINK DURABLE initial slash] {source_chat_id}:{msg.message_id}->{dst_chat_id}:{dst_msg_id}: {e}')
-                owner_id = msg.from_user.id if getattr(msg, 'from_user', None) else 0
-                initial_slash_synced_rec = sync_forwarded_finance_message(int(dst_chat_id), int(dst_msg_id), text_for_finance, owner_id, source_msg=msg)
-                if isinstance(initial_slash_synced_rec, dict): initial_slash_synced_rec = _v169_apply_predicted_record_uid(int(dst_chat_id), initial_slash_synced_rec, initial_slash_command)
-        if not initial_slash_sent:
-            if reply_to_target_id:
-                try:
-                    sent = _tg_call_retry(bot.copy_message, dst_chat_id, source_chat_id, msg.message_id, reply_to_message_id=reply_to_target_id, allow_sending_without_reply=True, reply_markup=pre_copy_markup, purpose='forward_copy_message')
-                except TypeError:
-                    try:
-                        sent = _tg_call_retry(bot.copy_message, dst_chat_id, source_chat_id, msg.message_id, reply_to_message_id=reply_to_target_id, reply_markup=pre_copy_markup, purpose='forward_copy_message')
-                    except TypeError:
-                        sent = _tg_call_retry(bot.copy_message, dst_chat_id, source_chat_id, msg.message_id, reply_markup=pre_copy_markup, purpose='forward_copy_message')
-            else:
-                sent = _tg_call_retry(bot.copy_message, dst_chat_id, source_chat_id, msg.message_id, reply_markup=pre_copy_markup, purpose='forward_copy_message')
-            dst_msg_id = sent.message_id
-    except Exception as e_copy:
-        migrated_id = None if _migration_retry else _handle_supergroup_migration_error(dst_chat_id, e_copy)
-        if migrated_id is not None:
-            _note_forward_target_migrated(source_chat_id, int(getattr(msg, 'message_id', 0) or 0), dst_chat_id, migrated_id)
-            return _forward_single_to_target(source_chat_id, msg, migrated_id, finance_enabled, _migration_retry=True)
-        try:
-            sent_forward = _tg_call_retry(bot.forward_message, dst_chat_id, source_chat_id, msg.message_id, purpose='forward_message_fallback')
-            dst_msg_id = sent_forward.message_id
-        except Exception as e_forward:
-            migrated_id = None if _migration_retry else _handle_supergroup_migration_error(dst_chat_id, e_forward)
-            if migrated_id is not None:
-                _note_forward_target_migrated(source_chat_id, int(getattr(msg, 'message_id', 0) or 0), dst_chat_id, migrated_id)
-                return _forward_single_to_target(source_chat_id, msg, migrated_id, finance_enabled, _migration_retry=True)
-            try:
-                sent_msg = _fallback_send_single(dst_chat_id, msg, reply_to_message_id=reply_to_target_id)
-                dst_msg_id = sent_msg.message_id
-            except Exception as e_send:
-                migrated_id = None if _migration_retry else _handle_supergroup_migration_error(dst_chat_id, e_send)
-                if migrated_id is not None:
-                    _note_forward_target_migrated(source_chat_id, int(getattr(msg, 'message_id', 0) or 0), dst_chat_id, migrated_id)
-                    return _forward_single_to_target(source_chat_id, msg, migrated_id, finance_enabled, _migration_retry=True)
-                final_error = e_forward if 'Unsupported fallback content_type' in str(e_send) else e_send
-                failure_state = _notify_forward_failure(source_chat_id, msg.message_id, dst_chat_id, final_error)
-                if str(failure_state).startswith('migrated:') and (not _migration_retry):
-                    try:
-                        migrated_id = int(str(failure_state).split(':', 1)[1])
-                        _note_forward_target_migrated(source_chat_id, int(getattr(msg, 'message_id', 0) or 0), dst_chat_id, migrated_id)
-                        return _forward_single_to_target(source_chat_id, msg, migrated_id, finance_enabled, _migration_retry=True)
-                    except Exception:
-                        pass
-                terminal_state = 'suspended' if failure_state == 'suspended' else 'failed'
-                _forward_outcome_update(source_chat_id, int(getattr(msg, 'message_id', 0) or 0), dst_chat_id=int(dst_chat_id), dst_state=terminal_state, error=str(final_error))
-                return None
-    _store_forward_link(source_chat_id, msg.message_id, dst_chat_id, dst_msg_id)
-    try:
-        _v260_forward_finance_op_mark(int(source_chat_id), int(msg.message_id), int(dst_chat_id), 'copy_delivered', dst_msg_id=int(dst_msg_id), text=str(text_for_finance or '')[:4000], owner=int(getattr(getattr(msg,'from_user',None),'id',0) or 0), source_date=getattr(msg,'date',None))
-    except Exception:
-        pass
-    _forward_outcome_update(source_chat_id, int(msg.message_id), dst_chat_id=int(dst_chat_id), dst_state='delivered', dst_msg_id=int(dst_msg_id))
-    try:
-        _persist_forward_index_in_data(data)
-        save_data(data, root_only=True)
-    except Exception as e:
-        log_error(f'[FORWARD LINK DURABLE] {source_chat_id}:{msg.message_id}->{dst_chat_id}:{dst_msg_id}: {e}')
-    bump_quick_balance_recreate_counter(dst_chat_id)
-    _v212_task_reconcile_forward_copy(dst_chat_id, dst_msg_id, source_chat_id, msg, is_edit=False)
-    if finance_enabled and text_for_finance:
-        try:
-            owner_id = msg.from_user.id if getattr(msg, 'from_user', None) else 0
-            ok_fin = initial_slash_synced_rec or sync_forwarded_finance_message(dst_chat_id, dst_msg_id, text_for_finance, owner_id, source_msg=msg)
-            if ok_fin:
-                _rec = ok_fin if isinstance(ok_fin, dict) else find_record_by_message_id(dst_chat_id, dst_msg_id)
-                if isinstance(_rec, dict) and initial_slash_sent:
-                    _rec['forward_copy_content_type'] = 'text'
-                _persist_forward_finance_delivery_now(source_chat_id, msg.message_id, dst_chat_id, dst_msg_id, _rec)
-                if initial_slash_sent and isinstance(_rec, dict):
-                    actual_command = _forward_copy_record_command(_rec)
-                    if actual_command == initial_slash_command:
-                        _ui_ok = True
-                        try:
-                            bot_journal('forward_copy_initial_slash', int(dst_chat_id), f'src={source_chat_id}:{msg.message_id} dst_msg={dst_msg_id} command={actual_command}')
-                        except Exception:
-                            pass
-                    else:
-                        _ui_ok = apply_forward_copy_edit_ui(source_chat_id, dst_chat_id, dst_msg_id, msg, rec=_rec)
-                else:
-                    _ui_ok = apply_forward_copy_edit_ui(source_chat_id, dst_chat_id, dst_msg_id, msg, rec=_rec)
-                if not _ui_ok and forward_copy_edit_mode(source_chat_id) != 'normal':
-                    schedule_forward_copy_edit_ui_retry(source_chat_id, dst_chat_id, dst_msg_id, msg, rec=_rec, delay=0.8)
-            elif text_has_any_digit(text_for_finance):
-                try:
-                    _dst_fin_mode = bool(is_finance_mode(dst_chat_id))
-                except Exception:
-                    _dst_fin_mode = False
-                if _dst_fin_mode:
-                    log_error(f'[FWD FINANCE NOT RECORDED] {get_chat_display_name(source_chat_id)}:{msg.message_id} -> {get_chat_display_name(dst_chat_id)}:{dst_msg_id} text={text_for_finance[:220]!r}')
-                    _v260_schedule_finance_forward_repair(int(source_chat_id), int(msg.message_id), int(dst_chat_id), int(dst_msg_id), text_for_finance, int(owner_id or 0), getattr(msg, 'date', None))
-                else:
-                    bot_journal('forward_finance_not_expected', dst_chat_id, f'src={source_chat_id}:{msg.message_id} dst_msg={dst_msg_id}')
-        except Exception as e:
-            log_error(f'_forward_single_to_target finance sync {get_chat_display_name(source_chat_id)}->{get_chat_display_name(dst_chat_id)}: {e}')
-            try:
-                _v260_schedule_finance_forward_repair(int(source_chat_id), int(msg.message_id), int(dst_chat_id), int(dst_msg_id), text_for_finance, int(getattr(getattr(msg,'from_user',None),'id',0) or 0), getattr(msg, 'date', None))
-            except Exception:
-                pass
-    try:
-        capture_forwarded_bot_copy_as_secret(dst_chat_id, dst_msg_id, msg)
-    except Exception as e:
-        log_error(f'forward secret capture {source_chat_id}->{dst_chat_id}:{dst_msg_id}: {e}')
-    return dst_msg_id
 
 def _flush_media_group_forward(source_chat_id: int, media_group_id: str):
     if not FORWARD_TASK_POOL.submit(int(source_chat_id), _flush_media_group_forward_locked, source_chat_id, media_group_id):
@@ -38441,104 +38149,6 @@ def clear_edit_delete_selection(chat_id: int, day_key: str | None=None):
     save_data(data)
 
 # [OCH12.35 COMPAT] legacy update_record_in_chat -> 19_compat_legacy.py
-def update_record_in_chat(chat_id: int, rid: int, amount: float, note: str, source_finance_text: str | None=None, source_msg_id: int | None=None) -> bool:
-    """Edit one finance row and persist the matching ARS/USD ledger mirror immediately.
-
-    Normal edits target the active ledger by R-id.  💰Перес can additionally pass the bot-copy
-    message id, which lets an old pre-deploy row be edited even when it currently lives in a
-    non-active currency ledger with a colliding R-id.
-    """
-    bot_journal('record_update_start', chat_id, f"rid={rid} amount={amount} note={note} msg={source_msg_id or ''}")
-    if globals().get('constitution_finance_write_blocked_v232') and constitution_finance_write_blocked_v232():
-        return False
-    chat_id = int(chat_id)
-    rid = int(rid)
-    op_id = operation_begin('finance_edit', chat_id, target=str(rid), payload={'amount': amount, 'note': note, 'source_msg_id': source_msg_id}, critical=True) if 'operation_begin' in globals() else ''
-    store = get_chat_store(chat_id)
-    active = _ensure_currency_ledgers(store)
-
-    def _match(rec):
-        if not isinstance(rec, dict):
-            return False
-        try:
-            if int(rec.get('id', -1)) != rid:
-                return False
-        except Exception:
-            return False
-        return source_msg_id is None or _record_has_message_id(rec, int(source_msg_id))
-    record_keys = ['records'] if source_msg_id is None else ['records', 'ars_records', 'usd_records']
-    targets = []
-    touched_ledgers = set()
-    seen = set()
-    for key in record_keys:
-        for rec in store.get(key, []) or []:
-            if not _match(rec):
-                continue
-            oid = id(rec)
-            if oid in seen:
-                continue
-            seen.add(oid)
-            targets.append((key, rec))
-            if key == 'ars_records':
-                touched_ledgers.add('ars')
-            elif key == 'usd_records':
-                touched_ledgers.add('usd')
-            elif key == 'records':
-                touched_ledgers.add(active)
-    if not targets:
-        if op_id and 'operation_review' in globals():
-            operation_review(op_id, 'record not found')
-        return False
-    before_snapshot = copy.deepcopy(targets[0][1]) if targets else {}
-    for _key, target in targets:
-        target['amount'] = amount
-        target['note'] = note
-        if source_finance_text is not None:
-            target['source_finance_text'] = str(source_finance_text or '').strip()
-    daily_keys = ['daily_records'] if source_msg_id is None else ['daily_records', 'ars_daily_records', 'usd_daily_records']
-    for dkey in daily_keys:
-        for _dk, arr in (store.get(dkey, {}) or {}).items():
-            for rec in arr or []:
-                if not _match(rec):
-                    continue
-                rec['amount'] = amount
-                rec['note'] = note
-                if source_finance_text is not None:
-                    rec['source_finance_text'] = str(source_finance_text or '').strip()
-    store['balance'] = sum((float(r.get('amount', 0) or 0) for r in store.get('records', []) or []))
-    for ledger in touched_ledgers:
-        if ledger == active:
-            continue
-        store[f'{ledger}_balance'] = sum((float(r.get('amount', 0) or 0) for r in store.get(f'{ledger}_records', []) or []))
-    _snapshot_active_currency_ledger(store, active)
-    # R7: amount/note edit does not reorder records. Avoid full monthly/global
-    # rebuild in the Telegram request path; derived aggregates run once later.
-    try:
-        for _key, _target in targets:
-            ensure_finance_record_uid(chat_id, _target)
-    except Exception:
-        pass
-    if 'persist_finance_chat_local_fast' in globals():
-        persist_finance_chat_local_fast(chat_id)
-    else:
-        save_data(data, chat_ids=[chat_id])
-    try:
-        _dk = str((targets[0][1] if targets else {}).get('day_key') or store.get('current_view_day') or '')
-        schedule_financial_window_refresh(chat_id, _dk, reason='record_edit_fast_v168')
-    except Exception:
-        pass
-    try:
-        schedule_finance_postcommit_background_v243(chat_id, reason='record_edit_r7', delay=0.25)
-    except Exception:
-        pass
-    try:
-        finance_cache_invalidate(chat_id, 'finance_edit')
-        finance_integrity_append(chat_id, 'edit', targets[0][1] if targets else {'id': rid}, details={'before': before_snapshot})
-    except Exception as _integrity_exc:
-        log_error(f'finance edit integrity: {_integrity_exc}')
-    if op_id and 'operation_complete' in globals():
-        operation_complete(op_id, f'record={rid}')
-    return True
 
 
 def delete_selected_records(chat_id: int, day_key: str) -> int:
@@ -46587,27 +46197,6 @@ def _canon_record_day_key__001(rec: dict) -> str:
     return rec['day_key']
 
 # [OCH12.35 COMPAT] legacy _v258_record_strong_keys -> 19_compat_legacy.py
-def _v258_record_strong_keys(rec: dict, chat_id: int) -> list[str]:
-    """Stable keys that prove two finance rows are the same Telegram effect.
-
-    Deliberately excludes source_order_msg_id: forwarded copies may legitimately
-    share an upstream order id while being different messages in this chat.
-    """
-    out = []
-    try:
-        op = str((rec or {}).get('operation_key') or '').strip()
-        if op and op.startswith(f'finance:{int(chat_id)}:'):
-            out.append('op:' + op)
-    except Exception:
-        pass
-    for key in ('source_msg_id', 'origin_msg_id', 'msg_id'):
-        try:
-            mid = int((rec or {}).get(key) or 0)
-            if mid:
-                out.append(f'msg:{mid}')
-        except Exception:
-            pass
-    return list(dict.fromkeys(out))
 
 def _v258_merge_duplicate_finance_records(chat_id: int, records: list[dict]) -> tuple[list[dict], int]:
     """Collapse historical deploy/edit duplicates without merging real operations.
@@ -46685,63 +46274,6 @@ def _v258_merge_duplicate_finance_records(chat_id: int, records: list[dict]) -> 
     return out, removed
 
 # [OCH12.35 COMPAT] legacy normalize_chat_records -> 19_compat_legacy.py
-def normalize_chat_records(chat_id: int) -> None:
-    """
-    v258: records — основной источник, daily_records строится из него.
-    Сортировка стабильная: Telegram date + исходный message_id. Исторические
-    дубли одной Telegram-записи после deploy/edit схлопываются по сильной
-    идентичности, но независимые одинаковые суммы/описания не объединяются.
-    """
-    store = get_chat_store(chat_id)
-    records = store.get('records')
-    daily = store.get('daily_records') or {}
-    if not isinstance(records, list) or not records:
-        rebuilt = []
-        for dk in sorted(daily.keys()):
-            for rec in daily.get(dk, []) or []:
-                if isinstance(rec, dict):
-                    rec.setdefault('day_key', dk)
-                    rebuilt.append(rec)
-        records = rebuilt
-    try:
-        records, _v258_removed = _v258_merge_duplicate_finance_records(int(chat_id), list(records or []))
-    except Exception as _v258_dedupe_exc:
-        _v258_removed = 0
-        try: log_error(f'v258 finance duplicate migration {chat_id}: {_v258_dedupe_exc}')
-        except Exception: pass
-    clean = []
-    for rec in records or []:
-        if not isinstance(rec, dict):
-            continue
-        rec.setdefault('timestamp', now_local().isoformat(timespec='seconds'))
-        rec.setdefault('amount', 0)
-        rec.setdefault('note', '')
-        rec.setdefault('owner', '')
-        rec.setdefault('source_order_msg_id', rec.get('source_msg_id') or rec.get('origin_msg_id') or rec.get('msg_id') or rec.get('id') or 0)
-        _record_day_key(rec)
-        try:
-            if 'ensure_finance_record_uid' in globals():
-                ensure_finance_record_uid(int(chat_id), rec)
-        except Exception:
-            pass
-        clean.append(rec)
-    clean.sort(key=record_sort_key)
-    store['records'] = clean
-    rebuilt_daily = {}
-    for rec in clean:
-        rebuilt_daily.setdefault(_record_day_key(rec), []).append(rec)
-    store['daily_records'] = rebuilt_daily
-    if _v258_removed:
-        try:
-            store['balance'] = sum((float(r.get('amount', 0) or 0) for r in clean))
-            store['next_id'] = max([int(r.get('id', 0) or 0) for r in clean] + [0]) + 1
-            store['_finance_dedupe_v258_removed'] = int(store.get('_finance_dedupe_v258_removed') or 0) + int(_v258_removed)
-            if 'migrate_finance_source_index_v257' in globals():
-                migrate_finance_source_index_v257(int(chat_id))
-            bot_journal('finance_duplicate_collapsed_v258', int(chat_id), f'removed={int(_v258_removed)}')
-        except Exception as _v258_post_exc:
-            try: log_error(f'v258 finance duplicate post-normalize {chat_id}: {_v258_post_exc}')
-            except Exception: pass
 
 def recalc_balance(chat_id: int):
     normalize_chat_records(chat_id)
@@ -56456,18 +55988,6 @@ def _v151_schedule_postcommit_cover(chat_id: int, rec: dict | None, currencies) 
         return False
 
 # [OCH12.35 COMPAT] legacy add_record_to_chat -> 19_compat_legacy.py
-def add_record_to_chat(chat_id: int, amount: float, note: str, owner: int, source_msg=None, day_key=None, usd_amount=None, usd_note: str='', usd_only: bool=False, source_finance_text: str=''):
-    rec = _V151_BASE_ADD_RECORD(chat_id, amount, note, owner, source_msg=source_msg, day_key=day_key, usd_amount=usd_amount, usd_note=usd_note, usd_only=usd_only, source_finance_text=source_finance_text)
-    if isinstance(rec, dict):
-        try:
-            ensure_finance_record_uid(int(chat_id), rec)
-        except Exception:
-            pass
-        currencies = ['ars']
-        if usd_amount is not None:
-            currencies.append('usd')
-        _v151_schedule_postcommit_cover(int(chat_id), rec, currencies)
-    return rec
 
 def _add_record_to_currency_ledger(chat_id: int, ledger: str, amount: float, note: str, owner: int, source_msg=None, day_key: str | None=None):
     ledger = 'usd' if str(ledger).lower() == 'usd' else 'ars'
@@ -86507,7 +86027,75 @@ _modern_simple_excel_styles_comments = _canon_modern_simple_excel_styles_comment
 _period_excel_style_keyboard = _canon_period_excel_style_keyboard__001
 _period_export_bounds = _canon_period_export_bounds__001
 _period_export_rows = _canon_period_export_rows__001
-_persist_forward_finance_delivery_now = _canon_persist_forward_finance_delivery_now__001
+def _persist_forward_finance_delivery_now(src_chat_id: int, src_msg_id: int, dst_chat_id: int, dst_msg_id: int, rec: dict | None=None):
+    batch_id = _fin_forward_batch_id(int(src_chat_id), int(src_msg_id)) if '_fin_forward_batch_id' in globals() else ''
+    with _FIN_FORWARD_BATCH_LOCK:
+        in_batch = batch_id in _FIN_FORWARD_BATCHES
+    if in_batch:
+        try:
+            if isinstance(rec, dict):
+                tags = {'forwarded_by_bot': True, 'forward_source_chat_id': int(src_chat_id), 'forward_source_msg_id': int(src_msg_id), 'forward_dst_chat_id': int(dst_chat_id), 'forward_dst_msg_id': int(dst_msg_id)}
+                rec.update(tags)
+                store = get_chat_store(int(dst_chat_id))
+                rid = rec.get('id')
+                for arr in (store.get('daily_records', {}) or {}).values():
+                    for rr in arr or []:
+                        if isinstance(rr, dict) and rr.get('id') == rid:
+                            rr.update(tags)
+            _persist_forward_index_in_data(data)
+            save_data(data, chat_ids=[int(dst_chat_id)])
+            schedule_quick_backup(int(dst_chat_id), 0.5)
+            with _FIN_FORWARD_BATCH_LOCK:
+                row = _FIN_FORWARD_BATCHES.get(batch_id)
+                if isinstance(row, dict):
+                    row.setdefault('durable_chats', set()).add(int(dst_chat_id))
+            bot_journal('forward_finance_local_committed', int(dst_chat_id), f'batch={batch_id} src={src_chat_id}:{src_msg_id} dst_msg={dst_msg_id}; combined_delta=1')
+            return True
+        except Exception as exc:
+            log_error(f'[V146 FWD FINANCE LOCAL ERROR] {src_chat_id}:{src_msg_id}->{dst_chat_id}:{dst_msg_id}: {exc}')
+            return False
+    try:
+        if isinstance(rec, dict):
+            tags = {'forwarded_by_bot': True, 'forward_source_chat_id': int(src_chat_id), 'forward_source_msg_id': int(src_msg_id), 'forward_dst_chat_id': int(dst_chat_id), 'forward_dst_msg_id': int(dst_msg_id), 'operation_key': _v260_forward_finance_operation_key(src_chat_id, src_msg_id, dst_chat_id)}
+            rec.update(tags)
+            store = get_chat_store(int(dst_chat_id)); rid = rec.get('id')
+            for arr in (store.get('daily_records', {}) or {}).values():
+                for rr in arr or []:
+                    if isinstance(rr, dict) and rr.get('id') == rid:
+                        rr.update(tags)
+            try:
+                _remember_finance_source_identity_v257(int(dst_chat_id), rec, int(dst_msg_id), 'records')
+            except Exception:
+                pass
+            if 'persist_finance_chat_local_fast' in globals() and not persist_finance_chat_local_fast(int(dst_chat_id)):
+                raise RuntimeError('local finance SQLite commit failed')
+            _v260_forward_finance_op_mark(src_chat_id, src_msg_id, dst_chat_id, 'committed', dst_msg_id=int(dst_msg_id), record_uid=str(rec.get('record_uid') or ''), record_id=int(rec.get('id') or 0))
+        _persist_forward_index_in_data(data)
+        try:
+            pool = globals().get('BACKGROUND_TASK_POOL')
+            if pool is not None:
+                pool.submit_unique(f'fwd-root-v260:{src_chat_id}:{src_msg_id}:{dst_chat_id}', save_data, data, root_only=True)
+        except Exception:
+            pass
+        def _remote_after_local():
+            try:
+                ok = persist_critical_delta_now(int(dst_chat_id))
+                if not ok:
+                    schedule_quick_backup(int(dst_chat_id), MEGA_DELTA_PRIORITY_DELAY_SECONDS)
+            except Exception as exc:
+                log_error(f'[FWD FINANCE ASYNC BACKUP] {src_chat_id}:{src_msg_id}->{dst_chat_id}:{dst_msg_id}: {exc}')
+        try:
+            pool = globals().get('DELTA_TASK_POOL') or globals().get('BACKGROUND_TASK_POOL')
+            if pool is not None:
+                pool.submit_unique(f'fwd-delta-v260:{src_chat_id}:{src_msg_id}:{dst_chat_id}', _remote_after_local)
+        except Exception:
+            pass
+        log_info(f'[FWD FINANCE DURABLE] local committed; remote async {src_chat_id}:{src_msg_id} -> {dst_chat_id}:{dst_msg_id}')
+        return True
+    except Exception as e:
+        _v260_forward_finance_op_mark(src_chat_id, src_msg_id, dst_chat_id, 'partial_finance_missing', dst_msg_id=int(dst_msg_id), last_error=str(e)[:300])
+        log_error(f'[FWD FINANCE DURABLE ERROR] {src_chat_id}:{src_msg_id} -> {dst_chat_id}:{dst_msg_id}: {e}')
+        return False
 _prune_delta_files_after_full_snapshot = _canon_prune_delta_files_after_full_snapshot__002
 _record_day_key = _canon_record_day_key__001
 _remember_forward_pair = _canon_remember_forward_pair__001
@@ -86591,7 +86179,15 @@ _window_diag_duplicate_marker = _canon_window_diag_duplicate_marker__001
 _write_simple_xlsx = _canon_write_simple_xlsx__001
 _write_tabl_lsx_xlsx = _canon_write_tabl_lsx_xlsx__001
 _xlsx_simple_rows_with_balances = _canon_xlsx_simple_rows_with_balances__001
-add_forward_link = _v217_add_forward_link
+def add_forward_link(src_chat_id: int, dst_chat_id: int, mode: str):
+    src, dst = int(src_chat_id), int(dst_chat_id)
+    _v217_forward_scope_guard(src, dst)
+    _v166_authorize_pair(src, dst)
+    with data_lock, _V166_FORWARD_STATE_LOCK:
+        data.setdefault('forward_rules', {}).setdefault(str(src), {})[str(dst)] = str(mode)
+    _v166_schedule_forward_persist(src, dst)
+    if _v215_circle_business_chat(src):
+        _v215_set_forward_mode(src, True, persist=True)
 backup_excel_all_enabled = _canon_backup_excel_all_enabled__001
 backup_window_for_owner = _canon_backup_window_for_owner__001
 begin_secret_full_edit = _canon_begin_secret_full_edit__002
@@ -86644,7 +86240,42 @@ excel_new_export_options = _canon_excel_new_export_options__001
 excel_table_style = _canon_excel_table_style__001
 fast_ui_edit_message_text = _canon_fast_ui_edit_message_text__001
 force_new_day_window = _canon_force_new_day_window__001
-forward_any_message = _canon_forward_any_message__002
+def forward_any_message(source_chat_id: int, msg):
+    cid = int(source_chat_id)
+    if _v215_circle_business_chat(cid) and (not contour_forwarding_mode_enabled(cid)):
+        try:
+            bot_journal('forward_mode_off_skip_v215', cid, f"message_id={int(getattr(msg, 'message_id', 0) or 0)}", 'INFO')
+        except Exception:
+            pass
+        return None
+    try:
+        source_msg_id = int(getattr(msg, 'message_id', 0) or 0)
+        sender_skip_reason = _forward_sender_skip_reason(msg)
+        if sender_skip_reason:
+            _forward_outcome_skip(cid, msg, sender_skip_reason)
+            return None
+        if getattr(msg, 'edit_date', None):
+            _forward_outcome_skip(cid, msg, 'edited_source')
+            return None
+        targets = sorted(list(resolve_forward_targets(cid) or []), key=lambda row: 0 if bool(row[2]) else 1)
+        if not targets:
+            if source_msg_id:
+                _forward_outcome_update(cid, source_msg_id, state='no_targets')
+            return None
+        if getattr(msg, 'media_group_id', None) and getattr(msg, 'content_type', None) in ('photo', 'video', 'document', 'audio'):
+            if source_msg_id:
+                _forward_outcome_update(cid, source_msg_id, state='media_group_pending')
+            _collect_media_group_for_forward(cid, msg)
+            return None
+        if source_msg_id:
+            _forward_outcome_update(cid, source_msg_id, state='dispatching')
+        for dst_chat_id, mode, finance_enabled in targets:
+            _forward_single_to_target(cid, msg, dst_chat_id, finance_enabled)
+        if source_msg_id:
+            _forward_outcome_update(cid, source_msg_id, state='completed')
+    except Exception as e:
+        log_error(f'forward_any_message fatal: {e}')
+    return None
 forward_copy_edit_mode = _canon_forward_copy_edit_mode__001
 forward_copy_edit_mode_label = _canon_forward_copy_edit_mode_label__001
 get_additional_owner_ids = _canon_get_additional_owner_ids__001
@@ -86688,10 +86319,64 @@ reminder_merge_enabled = _canon_reminder_merge_enabled__001
 reminder_merge_mode = _canon_reminder_merge_mode__001
 reminder_merge_mode_label = _canon_reminder_merge_mode_label__001
 reminder_ui_mode = _canon_reminder_ui_mode__001
-remove_forward_finance = _canon_remove_forward_finance__002
-remove_forward_link = _v217_remove_forward_link
+def remove_forward_finance(src_chat_id: int, dst_chat_id: int):
+    src, dst = int(src_chat_id), int(dst_chat_id)
+    _v217_forward_scope_guard(src, dst)
+    with data_lock, _V166_FORWARD_STATE_LOCK:
+        ff = data.setdefault('forward_finance', {})
+        (ff.get(str(src)) or {}).pop(str(dst), None)
+        if str(src) in ff and not ff.get(str(src)):
+            ff.pop(str(src), None)
+    _v166_cleanup_global_pair(src, dst)
+    _v166_schedule_forward_persist(src, dst)
+def remove_forward_link(src_chat_id: int, dst_chat_id: int):
+    src, dst = int(src_chat_id), int(dst_chat_id)
+    _v217_forward_scope_guard(src, dst)
+    with data_lock, _V166_FORWARD_STATE_LOCK:
+        fr = data.setdefault('forward_rules', {})
+        ff = data.setdefault('forward_finance', {})
+        (fr.get(str(src)) or {}).pop(str(dst), None)
+        if str(src) in fr and not fr.get(str(src)):
+            fr.pop(str(src), None)
+        (ff.get(str(src)) or {}).pop(str(dst), None)
+        if str(src) in ff and not ff.get(str(src)):
+            ff.pop(str(src), None)
+    _v166_cleanup_global_pair(src, dst)
+    _v166_schedule_forward_persist(src, dst)
+    if _v215_circle_business_chat(src) and (not _v215_forward_rules_present(src)):
+        _v215_set_forward_mode(src, False, persist=True)
 render_usd_month_window = _canon_render_usd_month_window__001
-resolve_forward_targets = _canon_resolve_forward_targets__001
+def resolve_forward_targets(source_chat_id: int):
+    resolver = globals().get('resolve_canonical_chat_id_v199')
+    suspended = globals().get('is_forward_target_suspended_v199')
+    source_raw = int(source_chat_id)
+    src = int(resolver(source_raw)) if callable(resolver) else source_raw
+    with data_lock:
+        fr = data.get('forward_rules', {}) or {}
+        ff = data.get('forward_finance', {}) or {}
+        src_key = str(src if str(src) in fr else source_raw)
+        rules = list((fr.get(src_key) or {}).items())
+        finmap = dict(ff.get(src_key) or {})
+    out = []
+    seen = set()
+    for dst, mode in rules:
+        try:
+            raw_dst = int(dst)
+            canonical_dst = int(resolver(raw_dst)) if callable(resolver) else raw_dst
+            if canonical_dst in seen or (callable(suspended) and (suspended(raw_dst) or suspended(canonical_dst))):
+                continue
+            if not tenant_same_space(src, canonical_dst):
+                try:
+                    bot_journal('tenant_cross_forward_blocked', src, f'dst={canonical_dst}')
+                except Exception:
+                    pass
+                continue
+            finance_enabled = bool(finmap.get(str(raw_dst), finmap.get(str(canonical_dst), False)))
+            out.append((canonical_dst, mode, finance_enabled))
+            seen.add(canonical_dst)
+        except Exception:
+            continue
+    return out
 restore_previous_window = _canon_restore_previous_window__001
 return_to_main_window_closing_previous = _canon_return_to_main_window_closing_previous__002
 runtime_classify_previous = _canon_runtime_classify_previous__001
@@ -86700,7 +86385,46 @@ safe_edit = _canon_safe_edit__001
 safe_edit_current_only = _canon_safe_edit_current_only__001
 safety_permission_allowed = _canon_safety_permission_allowed__001
 schedule_callback_receipt_ack = _canon_schedule_callback_receipt_ack__001
-schedule_forward_any_message = _canon_schedule_forward_any_message__001
+def schedule_forward_any_message(source_chat_id: int, msg):
+    cid = int(source_chat_id)
+    uid = _v152_actor_id(msg)
+    capability = 'forward.media_groups' if getattr(msg, 'media_group_id', None) else 'forward.messages'
+    if not _v152_actor_is_platform_owner(uid) and (not v152_chat_permission_allowed(cid, capability)):
+        try:
+            bot_journal('chat_permission_forward_blocked', cid, f'user={uid}; capability={capability}', 'WARN')
+        except Exception:
+            pass
+        return None
+    try:
+        sender_skip_reason = _forward_sender_skip_reason(msg)
+        if sender_skip_reason:
+            _forward_outcome_skip(cid, msg, sender_skip_reason)
+            return None
+        if _forward_anonymous_admin_message(msg):
+            try:
+                bot_journal('anonymous_admin_forward_allowed', cid, f"msg={int(getattr(msg, 'message_id', 0) or 0)} sender_chat={int(getattr(getattr(msg, 'sender_chat', None), 'id', 0) or 0)}")
+            except Exception:
+                pass
+        if getattr(msg, 'edit_date', None):
+            _forward_outcome_skip(cid, msg, 'edited_source')
+            return None
+    except Exception:
+        pass
+    _durable_note_forward_decision(cid, direct=False)
+    try:
+        mid = int(getattr(msg, 'message_id', 0) or 0)
+        if mid:
+            _forward_outcome_update(cid, mid, state='scheduled')
+    except Exception:
+        pass
+    pipeline = globals().get('schedule_financial_forward_pipeline')
+    if callable(pipeline):
+        pipeline(cid, msg)
+        return None
+    if not FIN_FORWARD_TASK_POOL.submit(cid, _forward_with_finance_priority, cid, msg):
+        log_error(f'FIN-FORWARD QUEUE FULL, INLINE FALLBACK: {cid}')
+        _forward_with_finance_priority(cid, msg)
+    return None
 schedule_mega_task_recovery = _canon_schedule_mega_task_recovery__003
 schedule_safe_failed_task_repairs = _canon_schedule_safe_failed_task_repairs__002
 security_known_users = _canon_security_known_users__001
@@ -86718,7 +86442,15 @@ set_chat_bot_removed = _canon_set_chat_bot_removed__001
 set_excel_interface_mode = _canon_set_excel_interface_mode__001
 set_excel_table_style = _canon_set_excel_table_style__001
 set_forward_copy_edit_mode = _canon_set_forward_copy_edit_mode__001
-set_forward_finance = _canon_set_forward_finance__002
+def set_forward_finance(src_chat_id: int, dst_chat_id: int, enabled: bool):
+    src, dst = int(src_chat_id), int(dst_chat_id)
+    _v217_forward_scope_guard(src, dst)
+    _v166_authorize_pair(src, dst)
+    with data_lock, _V166_FORWARD_STATE_LOCK:
+        data.setdefault('forward_finance', {}).setdefault(str(src), {})[str(dst)] = bool(enabled)
+    if enabled:
+        ensure_hidden_finance_for_forward_dst(dst)
+    _v166_schedule_forward_persist(src, dst)
 set_forward_menu_new_style_enabled = _canon_set_forward_menu_new_style_enabled__001
 set_internal_timer_seconds = _canon_set_internal_timer_seconds__001
 set_reminder_ui_mode = _canon_set_reminder_ui_mode__001
@@ -86776,10 +86508,6 @@ import threading as _v262_threading
 import time as _v262_time
 from collections import defaultdict as _v262_defaultdict, deque as _v262_deque
 
-_V262_BASE_STRONG_KEYS = globals().get('_v258_record_strong_keys')
-_V262_BASE_NORMALIZE = globals().get('normalize_chat_records')
-_V262_BASE_ADD_RECORD = globals().get('add_record_to_chat')
-_V262_BASE_BIND_FORWARD = globals().get('_v260_bind_forward_finance_record')
 _V262_BASE_CONFIG_PROJECTION = globals().get('_v234_config_projection_from_payload')
 _V262_FINANCE_LINK_LOCK = _v262_threading.RLock()
 _V262_NAV_MIRROR_LOCK = _v262_threading.RLock()
@@ -86861,12 +86589,20 @@ def _ensure_finance_origin_key_v262(chat_id: int, rec: dict | None, fallback_msg
     return key
 
 
-def _v258_record_strong_keys(rec: dict, chat_id: int) -> list[str]:
-    """v262 extends dedupe proof to forwarded copies and the immutable origin."""
+def _v258_record_strong_keys(rec: dict, chat_id: int):
+    """Single 13.4 identity implementation; local Telegram ids never mix with upstream ids."""
     out = []
-    if callable(_V262_BASE_STRONG_KEYS):
+    try:
+        op = str((rec or {}).get('operation_key') or '').strip()
+        if op and op.startswith((f'finance:{int(chat_id)}:', f'finance2:{int(_och132_current_bot_id() or 0)}:{int(chat_id)}:')):
+            out.append('op:' + op)
+    except Exception:
+        pass
+    for key in ('source_msg_id', 'origin_msg_id', 'msg_id', 'forward_dst_msg_id'):
         try:
-            out.extend(_V262_BASE_STRONG_KEYS(rec, int(chat_id)) or [])
+            mid = int((rec or {}).get(key) or 0)
+            if mid:
+                out.append(f'msg:{mid}')
         except Exception:
             pass
     try:
@@ -86881,7 +86617,7 @@ def _v258_record_strong_keys(rec: dict, chat_id: int) -> list[str]:
             out.append('op:' + op)
     except Exception:
         pass
-    return list(dict.fromkeys((str(x) for x in out if x)))
+    return list(dict.fromkeys(str(x) for x in out if x))
 
 
 def _v262_tag_store_origins(chat_id: int) -> int:
@@ -86905,25 +86641,103 @@ def _v262_tag_store_origins(chat_id: int) -> int:
 
 def normalize_chat_records(chat_id: int) -> None:
     _v262_tag_store_origins(int(chat_id))
-    if callable(_V262_BASE_NORMALIZE):
-        _V262_BASE_NORMALIZE(int(chat_id))
+    '\n    v258: records — основной источник, daily_records строится из него.\n    Сортировка стабильная: Telegram date + исходный message_id. Исторические\n    дубли одной Telegram-записи после deploy/edit схлопываются по сильной\n    идентичности, но независимые одинаковые суммы/описания не объединяются.\n    '
+    store = get_chat_store(chat_id)
+    records = store.get('records')
+    daily = store.get('daily_records') or {}
+    if not isinstance(records, list) or not records:
+        rebuilt = []
+        for dk in sorted(daily.keys()):
+            for rec in daily.get(dk, []) or []:
+                if isinstance(rec, dict):
+                    rec.setdefault('day_key', dk)
+                    rebuilt.append(rec)
+        records = rebuilt
+    try:
+        records, _v258_removed = _v258_merge_duplicate_finance_records(int(chat_id), list(records or []))
+    except Exception as _v258_dedupe_exc:
+        _v258_removed = 0
+        try:
+            log_error(f'v258 finance duplicate migration {chat_id}: {_v258_dedupe_exc}')
+        except Exception:
+            pass
+    clean = []
+    for rec in records or []:
+        if not isinstance(rec, dict):
+            continue
+        rec.setdefault('timestamp', now_local().isoformat(timespec='seconds'))
+        rec.setdefault('amount', 0)
+        rec.setdefault('note', '')
+        rec.setdefault('owner', '')
+        rec.setdefault('source_order_msg_id', rec.get('source_msg_id') or rec.get('origin_msg_id') or rec.get('msg_id') or rec.get('id') or 0)
+        _record_day_key(rec)
+        try:
+            if 'ensure_finance_record_uid' in globals():
+                ensure_finance_record_uid(int(chat_id), rec)
+        except Exception:
+            pass
+        clean.append(rec)
+    clean.sort(key=record_sort_key)
+    store['records'] = clean
+    rebuilt_daily = {}
+    for rec in clean:
+        rebuilt_daily.setdefault(_record_day_key(rec), []).append(rec)
+    store['daily_records'] = rebuilt_daily
+    if _v258_removed:
+        try:
+            store['balance'] = sum((float(r.get('amount', 0) or 0) for r in clean))
+            store['next_id'] = max([int(r.get('id', 0) or 0) for r in clean] + [0]) + 1
+            store['_finance_dedupe_v258_removed'] = int(store.get('_finance_dedupe_v258_removed') or 0) + int(_v258_removed)
+            if 'migrate_finance_source_index_v257' in globals():
+                migrate_finance_source_index_v257(int(chat_id))
+            bot_journal('finance_duplicate_collapsed_v258', int(chat_id), f'removed={int(_v258_removed)}')
+        except Exception as _v258_post_exc:
+            try:
+                log_error(f'v258 finance duplicate post-normalize {chat_id}: {_v258_post_exc}')
+            except Exception:
+                pass
     _v262_tag_store_origins(int(chat_id))
 
 
 def add_record_to_chat(chat_id: int, amount: float, note: str, owner: int, source_msg=None, day_key=None, usd_amount=None, usd_note: str='', usd_only: bool=False, source_finance_text: str=''):
-    if not callable(_V262_BASE_ADD_RECORD):
-        return None
-    rec = _V262_BASE_ADD_RECORD(int(chat_id), amount, note, owner, source_msg=source_msg, day_key=day_key, usd_amount=usd_amount, usd_note=usd_note, usd_only=usd_only, source_finance_text=source_finance_text)
+    rec = _finance_add_record_base(int(chat_id), amount, note, owner, source_msg=source_msg, day_key=day_key, usd_amount=usd_amount, usd_note=usd_note, usd_only=usd_only, source_finance_text=source_finance_text)
     if isinstance(rec, dict):
+        try:
+            ensure_finance_record_uid(int(chat_id), rec)
+        except Exception:
+            pass
+        currencies = ['ars']
+        if usd_amount is not None:
+            currencies.append('usd')
+        _v151_schedule_postcommit_cover(int(chat_id), rec, currencies)
         _ensure_finance_origin_key_v262(int(chat_id), rec, _v262_int(getattr(source_msg, 'message_id', 0) if source_msg is not None else 0))
     return rec
 
 
-def _v260_bind_forward_finance_record(rec: dict, source_msg, dst_chat_id: int, dst_msg_id: int) -> dict:
-    if callable(_V262_BASE_BIND_FORWARD):
-        rec = _V262_BASE_BIND_FORWARD(rec, source_msg, int(dst_chat_id), int(dst_msg_id))
-    if isinstance(rec, dict):
-        _ensure_finance_origin_key_v262(int(dst_chat_id), rec, int(dst_msg_id))
+def _v260_bind_forward_finance_record(rec: dict, source_msg, dst_chat_id: int, dst_msg_id: int):
+    if not isinstance(rec, dict) or source_msg is None:
+        return rec
+    try:
+        src_chat_id = int(getattr(getattr(source_msg, 'chat', None), 'id', 0) or 0)
+        src_msg_id = int(getattr(source_msg, 'forward_source_msg_id', 0) or getattr(source_msg, 'message_id', 0) or 0)
+    except Exception:
+        return rec
+    if not src_chat_id or not src_msg_id:
+        return rec
+    rec.update({
+        'forwarded_by_bot': True,
+        'telegram_bot_id': int(_current_bot_id_for_forwarding() or 0),
+        'forward_source_chat_id': src_chat_id,
+        'forward_source_msg_id': src_msg_id,
+        'forward_dst_chat_id': int(dst_chat_id),
+        'forward_dst_msg_id': int(dst_msg_id),
+        'operation_key': _v260_forward_finance_operation_key(src_chat_id, src_msg_id, int(dst_chat_id)),
+    })
+    try:
+        _remember_finance_source_identity_v257(int(dst_chat_id), rec, int(dst_msg_id), 'records')
+    except Exception:
+        pass
+    _ensure_finance_origin_key_v262(int(dst_chat_id), rec, int(dst_msg_id))
     return rec
 
 
@@ -87371,12 +87185,12 @@ def handle_finance_edit(msg):
         pass
     text = str(getattr(msg, 'text', None) or getattr(msg, 'caption', None) or '').strip()
     anchor_chat_id = chat_id
-    target = find_record_by_message_id(chat_id, int(msg.message_id)) if callable(globals().get('find_record_by_message_id')) else None
+    target = _och132_find_incoming_record(chat_id, msg) if callable(globals().get('_och132_find_incoming_record')) else (find_record_by_message_id(chat_id, int(msg.message_id)) if callable(globals().get('find_record_by_message_id')) else None)
     if not isinstance(target, dict):
         try:
             store = get_chat_store(chat_id)
             for rec in store.get('records', []) or []:
-                if isinstance(rec, dict) and int(msg.message_id) in {_v262_int(rec.get(k)) for k in ('source_msg_id', 'origin_msg_id', 'msg_id', 'source_order_msg_id')}:
+                if isinstance(rec, dict) and int(msg.message_id) in {_v262_int(rec.get(k)) for k in ('source_msg_id', 'origin_msg_id', 'msg_id')}:
                     target = rec
                     break
         except Exception:
@@ -97099,7 +96913,7 @@ import time as _r74_time
 
 _R74_RUNTIME_PARTS = ('runtime_flat.py',)
 _R74_MODULE_PURPOSE = {
-    'runtime_flat.py': 'очнись_13.3: выпрямленный production runtime; identity-safe finance after restore',
+    'runtime_flat.py': 'очнись_13.4: STRAIGHT finance/fin-forward/forward runtime; identity-safe after restore',
 }
 
 
@@ -99134,8 +98948,6 @@ except Exception:
 # SQLite forward_finance_ops_v260 ledger plus finance records carrying immutable
 # fin-origin/source identity.  Every edit mode resolves through the same local
 # identity repair before any decision to create a new Telegram copy.
-_OCH129_PARENT_GET_FORWARD_LINKS = globals().get('get_forward_links')
-_OCH129_PARENT_FORWARD_SINGLE = globals().get('_forward_single_to_target')
 _OCH129_PARENT_HANDLE_FINANCE_MESSAGE = globals().get('handle_finance_message')
 _OCH129_FORWARD_REPAIR_LOCK = _v262_threading.RLock()
 _OCH129_FORWARD_OP_ROWS = None
@@ -99320,12 +99132,9 @@ def _och129_recover_forward_links_local(src_chat_id: int, src_msg_id: int, targe
 
 
 def get_forward_links(src_chat_id: int, src_msg_id: int):
-    links = []
-    try:
-        if callable(_OCH129_PARENT_GET_FORWARD_LINKS):
-            links = list(_OCH129_PARENT_GET_FORWARD_LINKS(int(src_chat_id), int(src_msg_id)) or [])
-    except Exception:
-        links = []
+    key = (int(src_chat_id), int(src_msg_id))
+    with forward_map_lock:
+        links = list(forward_map.get(key, []))
     if links:
         return links
     return list(_och129_recover_forward_links_local(int(src_chat_id), int(src_msg_id), None, scan_records=True) or [])
@@ -99363,8 +99172,6 @@ def _och129_reconcile_existing_forward_copy(source_chat_id: int, msg, dst_chat_i
 
 def _forward_single_to_target(source_chat_id: int, msg, dst_chat_id: int, finance_enabled: bool, _migration_retry: bool=False):
     src_mid = int(getattr(msg, 'message_id', 0) or 0)
-    # Resolve the exact destination before the legacy create-copy branch.  This makes
-    # post-deploy redelivery idempotent even when the RAM/root forward_index vanished.
     links = list(get_forward_links(int(source_chat_id), src_mid) or [])
     match = next(((dc, dm) for dc, dm in links if int(dc) == int(dst_chat_id)), None)
     if match is None and finance_enabled:
@@ -99374,16 +99181,174 @@ def _forward_single_to_target(source_chat_id: int, msg, dst_chat_id: int, financ
         reconciled = _och129_reconcile_existing_forward_copy(int(source_chat_id), msg, int(dst_chat_id), int(match[1]), bool(finance_enabled))
         if reconciled:
             return int(reconciled)
-        # If Telegram edit/replacement itself fails, preserve exact-once: do not blindly
-        # create another copy while a durable destination identity still exists.
         try:
             bot_journal('forward_existing_copy_reconcile_deferred_v263', int(dst_chat_id), f'src={source_chat_id}:{src_mid}; dst={dst_chat_id}:{match[1]}', 'WARN')
         except Exception:
             pass
         return int(match[1])
-    if callable(_OCH129_PARENT_FORWARD_SINGLE):
-        return _OCH129_PARENT_FORWARD_SINGLE(int(source_chat_id), msg, int(dst_chat_id), bool(finance_enabled), _migration_retry=_migration_retry)
-    return None
+    try:
+        _forward_outcome_update(source_chat_id, int(getattr(msg, 'message_id', 0) or 0), state='dispatching', dst_chat_id=int(dst_chat_id), dst_state='attempted')
+    except Exception:
+        pass
+    reply_to_target_id = None
+    try:
+        reply_to_msg = getattr(msg, 'reply_to_message', None)
+        if reply_to_msg is not None:
+            reply_to_target_id = resolve_reply_target_message_id(source_chat_id, getattr(reply_to_msg, 'message_id', None), dst_chat_id)
+    except Exception as e:
+        log_error(f'_forward_single_to_target reply resolve {source_chat_id}->{dst_chat_id}: {e}')
+    pre_copy_markup = None
+    initial_slash_command = None
+    initial_slash_synced_rec = None
+    initial_slash_sent = False
+    text_for_finance = _message_text_for_finance(msg)
+    copy_edit_mode = 'normal'
+    try:
+        if finance_enabled:
+            copy_edit_mode = forward_copy_edit_mode(source_chat_id)
+            if copy_edit_mode == 'button':
+                pre_copy_markup = _forward_copy_edit_keyboard('button')
+    except Exception:
+        pre_copy_markup = None
+        copy_edit_mode = 'normal'
+    try:
+        use_initial_slash = False
+        try:
+            use_initial_slash = bool(finance_enabled and copy_edit_mode == 'slash' and (str(getattr(msg, 'content_type', '') or '') == 'text') and text_for_finance and is_finance_mode(int(dst_chat_id)) and looks_like_amount(text_for_finance))
+        except Exception:
+            use_initial_slash = False
+        if use_initial_slash:
+            with locked_chat(int(dst_chat_id)):
+                initial_slash_command = _predict_forward_copy_record_command(int(dst_chat_id), msg, text_for_finance)
+            if initial_slash_command:
+                display_text = (_strip_forward_copy_edit_command(text_for_finance) + '\n' + initial_slash_command).strip()
+                send_kwargs = {}
+                entities = getattr(msg, 'entities', None)
+                if entities:
+                    send_kwargs['entities'] = entities
+                if reply_to_target_id:
+                    send_kwargs['reply_to_message_id'] = int(reply_to_target_id)
+                    send_kwargs['allow_sending_without_reply'] = True
+                try:
+                    sent = _tg_call_retry(bot.send_message, int(dst_chat_id), display_text, purpose='forward_send_text_initial_slash', **send_kwargs)
+                except TypeError:
+                    send_kwargs.pop('allow_sending_without_reply', None)
+                    sent = _tg_call_retry(bot.send_message, int(dst_chat_id), display_text, purpose='forward_send_text_initial_slash', **send_kwargs)
+                dst_msg_id = int(sent.message_id)
+                initial_slash_sent = True
+                _store_forward_link(source_chat_id, msg.message_id, dst_chat_id, dst_msg_id)
+                _forward_outcome_update(source_chat_id, int(msg.message_id), dst_chat_id=int(dst_chat_id), dst_state='delivered', dst_msg_id=int(dst_msg_id))
+                try:
+                    _persist_forward_index_in_data(data)
+                    save_data(data, root_only=True)
+                except Exception as e:
+                    log_error(f'[FORWARD LINK DURABLE initial slash] {source_chat_id}:{msg.message_id}->{dst_chat_id}:{dst_msg_id}: {e}')
+                owner_id = msg.from_user.id if getattr(msg, 'from_user', None) else 0
+                initial_slash_synced_rec = sync_forwarded_finance_message(int(dst_chat_id), int(dst_msg_id), text_for_finance, owner_id, source_msg=msg)
+                if isinstance(initial_slash_synced_rec, dict):
+                    initial_slash_synced_rec = _v169_apply_predicted_record_uid(int(dst_chat_id), initial_slash_synced_rec, initial_slash_command)
+        if not initial_slash_sent:
+            if reply_to_target_id:
+                try:
+                    sent = _tg_call_retry(bot.copy_message, dst_chat_id, source_chat_id, msg.message_id, reply_to_message_id=reply_to_target_id, allow_sending_without_reply=True, reply_markup=pre_copy_markup, purpose='forward_copy_message')
+                except TypeError:
+                    try:
+                        sent = _tg_call_retry(bot.copy_message, dst_chat_id, source_chat_id, msg.message_id, reply_to_message_id=reply_to_target_id, reply_markup=pre_copy_markup, purpose='forward_copy_message')
+                    except TypeError:
+                        sent = _tg_call_retry(bot.copy_message, dst_chat_id, source_chat_id, msg.message_id, reply_markup=pre_copy_markup, purpose='forward_copy_message')
+            else:
+                sent = _tg_call_retry(bot.copy_message, dst_chat_id, source_chat_id, msg.message_id, reply_markup=pre_copy_markup, purpose='forward_copy_message')
+            dst_msg_id = sent.message_id
+    except Exception as e_copy:
+        migrated_id = None if _migration_retry else _handle_supergroup_migration_error(dst_chat_id, e_copy)
+        if migrated_id is not None:
+            _note_forward_target_migrated(source_chat_id, int(getattr(msg, 'message_id', 0) or 0), dst_chat_id, migrated_id)
+            return _forward_single_to_target(source_chat_id, msg, migrated_id, finance_enabled, _migration_retry=True)
+        try:
+            sent_forward = _tg_call_retry(bot.forward_message, dst_chat_id, source_chat_id, msg.message_id, purpose='forward_message_fallback')
+            dst_msg_id = sent_forward.message_id
+        except Exception as e_forward:
+            migrated_id = None if _migration_retry else _handle_supergroup_migration_error(dst_chat_id, e_forward)
+            if migrated_id is not None:
+                _note_forward_target_migrated(source_chat_id, int(getattr(msg, 'message_id', 0) or 0), dst_chat_id, migrated_id)
+                return _forward_single_to_target(source_chat_id, msg, migrated_id, finance_enabled, _migration_retry=True)
+            try:
+                sent_msg = _fallback_send_single(dst_chat_id, msg, reply_to_message_id=reply_to_target_id)
+                dst_msg_id = sent_msg.message_id
+            except Exception as e_send:
+                migrated_id = None if _migration_retry else _handle_supergroup_migration_error(dst_chat_id, e_send)
+                if migrated_id is not None:
+                    _note_forward_target_migrated(source_chat_id, int(getattr(msg, 'message_id', 0) or 0), dst_chat_id, migrated_id)
+                    return _forward_single_to_target(source_chat_id, msg, migrated_id, finance_enabled, _migration_retry=True)
+                final_error = e_forward if 'Unsupported fallback content_type' in str(e_send) else e_send
+                failure_state = _notify_forward_failure(source_chat_id, msg.message_id, dst_chat_id, final_error)
+                if str(failure_state).startswith('migrated:') and (not _migration_retry):
+                    try:
+                        migrated_id = int(str(failure_state).split(':', 1)[1])
+                        _note_forward_target_migrated(source_chat_id, int(getattr(msg, 'message_id', 0) or 0), dst_chat_id, migrated_id)
+                        return _forward_single_to_target(source_chat_id, msg, migrated_id, finance_enabled, _migration_retry=True)
+                    except Exception:
+                        pass
+                terminal_state = 'suspended' if failure_state == 'suspended' else 'failed'
+                _forward_outcome_update(source_chat_id, int(getattr(msg, 'message_id', 0) or 0), dst_chat_id=int(dst_chat_id), dst_state=terminal_state, error=str(final_error))
+                return None
+    _store_forward_link(source_chat_id, msg.message_id, dst_chat_id, dst_msg_id)
+    try:
+        _v260_forward_finance_op_mark(int(source_chat_id), int(msg.message_id), int(dst_chat_id), 'copy_delivered', dst_msg_id=int(dst_msg_id), text=str(text_for_finance or '')[:4000], owner=int(getattr(getattr(msg, 'from_user', None), 'id', 0) or 0), source_date=getattr(msg, 'date', None))
+    except Exception:
+        pass
+    _forward_outcome_update(source_chat_id, int(msg.message_id), dst_chat_id=int(dst_chat_id), dst_state='delivered', dst_msg_id=int(dst_msg_id))
+    try:
+        _persist_forward_index_in_data(data)
+        save_data(data, root_only=True)
+    except Exception as e:
+        log_error(f'[FORWARD LINK DURABLE] {source_chat_id}:{msg.message_id}->{dst_chat_id}:{dst_msg_id}: {e}')
+    bump_quick_balance_recreate_counter(dst_chat_id)
+    _v212_task_reconcile_forward_copy(dst_chat_id, dst_msg_id, source_chat_id, msg, is_edit=False)
+    if finance_enabled and text_for_finance:
+        try:
+            owner_id = msg.from_user.id if getattr(msg, 'from_user', None) else 0
+            ok_fin = initial_slash_synced_rec or sync_forwarded_finance_message(dst_chat_id, dst_msg_id, text_for_finance, owner_id, source_msg=msg)
+            if ok_fin:
+                _rec = ok_fin if isinstance(ok_fin, dict) else find_record_by_message_id(dst_chat_id, dst_msg_id)
+                if isinstance(_rec, dict) and initial_slash_sent:
+                    _rec['forward_copy_content_type'] = 'text'
+                _persist_forward_finance_delivery_now(source_chat_id, msg.message_id, dst_chat_id, dst_msg_id, _rec)
+                if initial_slash_sent and isinstance(_rec, dict):
+                    actual_command = _forward_copy_record_command(_rec)
+                    if actual_command == initial_slash_command:
+                        _ui_ok = True
+                        try:
+                            bot_journal('forward_copy_initial_slash', int(dst_chat_id), f'src={source_chat_id}:{msg.message_id} dst_msg={dst_msg_id} command={actual_command}')
+                        except Exception:
+                            pass
+                    else:
+                        _ui_ok = apply_forward_copy_edit_ui(source_chat_id, dst_chat_id, dst_msg_id, msg, rec=_rec)
+                else:
+                    _ui_ok = apply_forward_copy_edit_ui(source_chat_id, dst_chat_id, dst_msg_id, msg, rec=_rec)
+                if not _ui_ok and forward_copy_edit_mode(source_chat_id) != 'normal':
+                    schedule_forward_copy_edit_ui_retry(source_chat_id, dst_chat_id, dst_msg_id, msg, rec=_rec, delay=0.8)
+            elif text_has_any_digit(text_for_finance):
+                try:
+                    _dst_fin_mode = bool(is_finance_mode(dst_chat_id))
+                except Exception:
+                    _dst_fin_mode = False
+                if _dst_fin_mode:
+                    log_error(f'[FWD FINANCE NOT RECORDED] {get_chat_display_name(source_chat_id)}:{msg.message_id} -> {get_chat_display_name(dst_chat_id)}:{dst_msg_id} text={text_for_finance[:220]!r}')
+                    _v260_schedule_finance_forward_repair(int(source_chat_id), int(msg.message_id), int(dst_chat_id), int(dst_msg_id), text_for_finance, int(owner_id or 0), getattr(msg, 'date', None))
+                else:
+                    bot_journal('forward_finance_not_expected', dst_chat_id, f'src={source_chat_id}:{msg.message_id} dst_msg={dst_msg_id}')
+        except Exception as e:
+            log_error(f'_forward_single_to_target finance sync {get_chat_display_name(source_chat_id)}->{get_chat_display_name(dst_chat_id)}: {e}')
+            try:
+                _v260_schedule_finance_forward_repair(int(source_chat_id), int(msg.message_id), int(dst_chat_id), int(dst_msg_id), text_for_finance, int(getattr(getattr(msg, 'from_user', None), 'id', 0) or 0), getattr(msg, 'date', None))
+            except Exception:
+                pass
+    try:
+        capture_forwarded_bot_copy_as_secret(dst_chat_id, dst_msg_id, msg)
+    except Exception as e:
+        log_error(f'forward secret capture {source_chat_id}->{dst_chat_id}:{dst_msg_id}: {e}')
+    return dst_msg_id
 
 
 def _och129_finance_record_text(rec: dict) -> str:

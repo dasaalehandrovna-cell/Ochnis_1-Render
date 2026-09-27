@@ -1,4 +1,4 @@
-"""OCHNIS13 internal runtime configuration.
+"""OCHNIS 13 internal runtime configuration.
 
 All non-secret operational tunables that used to be Render environment variables
 live here.  Render ENV is intentionally reserved for credentials, remote
@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from typing import Dict
 
-CONFIG_VERSION = "och13-r1-authority-auto-r2"
+CONFIG_VERSION = "ochnis-13.4-straight-fin-forward-r1"
 
 # Render #1 / FAST.  These values were the R13 recommended deployment values.
 FRONT_INTERNAL_ENV: Dict[str, str] = {
@@ -25,17 +25,21 @@ FRONT_INTERNAL_ENV: Dict[str, str] = {
     "BOT_SPLIT_ROLE": "front",
     # OCH12.27: single-Render profile. Render #2 is treated as unavailable.
     "OCH1224_SINGLE_RENDER": "0",
-    "PEER_PING_ENABLED": "0",
+    "PEER_PING_ENABLED": "1",
     # OCH12.34: R1 is authoritative and self-sufficient; R2 is only an optional accelerator.
     "R1234_R2_ACCELERATOR_ONLY": "1",
     "R1234_R2_FAILOVER_TO_R1": "1",
-    "R1234_R2_HEALTH_TTL_SEC": "45",
+    "R1234_R2_HEALTH_TTL_SEC": "20",
     "R1234_R2_PROBE_CONNECT_SEC": "0.65",
     "R1234_R2_PROBE_READ_SEC": "1.25",
-    "R13_AUTO_DISTRIBUTED": "1",
-    "R13_R2_MONITOR_SEC": "12",
-    "R13_R2_NEGATIVE_TTL_SEC": "8",
-    "OCH1224_BOOT_REMOTE_PROBES": "0",
+    # OCHNIS 13: R1 is always operational; R2 is discovered automatically.
+    "OCH13_R2_AUTO_ACCEL": "1",
+    "OCH13_R2_BOOT_PROBE": "1",
+    "OCH13_R2_BOOT_RESTORE": "1",
+    "OCH13_R2_BOOT_CONNECT_SEC": "0.65",
+    "OCH13_R2_BOOT_READ_SEC": "1.25",
+    "OCH13_R2_RESTORE_TIMEOUT_SEC": "25",
+    "OCH1224_BOOT_REMOTE_PROBES": "1",
     "OCH1224_JOURNAL_LOCAL_ONLY": "1",
     "OCH1224_MEGA_ZERO_RESIDENT": "1",
     "BOT_JOURNAL_DURABLE_ENABLED": "0",
@@ -45,9 +49,9 @@ FRONT_INTERNAL_ENV: Dict[str, str] = {
     "BOT_THREAD_STACK_KB": "384",
     "SCHEDULER_WORKERS": "1",
     "R21_HEAVY_DISPATCH_WORKERS": "1",
-    "BOT_JOURNAL_MAX": "180",
-    "R26_TRACE_RING_ROWS": "500",
-    "WINDOW_ACTOR_MAX_WINDOWS": "400",
+    "BOT_JOURNAL_MAX": "120",
+    "R26_TRACE_RING_ROWS": "300",
+    "WINDOW_ACTOR_MAX_WINDOWS": "600",
     "WINDOW_DIAGNOSTICS_TAIL_LIMIT": "250",
     "WINDOW_DIAGNOSTICS_STATE_LIMIT": "400",
     "MEMORY_EVENT_KEEP": "60",
@@ -57,27 +61,32 @@ FRONT_INTERNAL_ENV: Dict[str, str] = {
     "MEMORY_HEAVY_BLOCK_MB": "320",
     "R80_MEGA_COMPACT_FLUSH_SEC": "180",
     "R80_MEGA_COMPACT_RETRY_SEC": "600",
-    "FINANCE_INTEGRITY_KEEP": "500",
+    "FINANCE_INTEGRITY_KEEP": "180",
+    "OPERATION_LEDGER_KEEP": "160",
+    "OPERATION_RECENT_KEEP": "60",
+    "EXPENSE_DRAFT_KEEP": "160",
+    "FORWARD_OUTCOME_MAX": "200",
+    "FINANCE_VIEW_CACHE_MAX": "96",
     "R45_DIAG_RING_ROWS": "250",
     "R45_DIAG_QUEUE_ROWS": "400",
 
     # R26: FAST isolation + forensic trace + bounded full rebase cadence.
-    "UI_WORKERS": "2",
+    "UI_WORKERS": "1",
         "FAST_UI_WORKERS": "2",
-        "FAST_UI_MAX_PENDING": "160",
-        "WINDOW_RENDER_WORKERS": "2",
-        "WINDOW_RENDER_MAX_PENDING_KEYS": "160",
-    "UI_MAX_PENDING": "180",
-    "CALLBACK_ACK_WORKERS": "2",
-    "NAVIGATION_UI_WORKERS": "2",
-    "NAVIGATION_UI_MAX_PENDING": "160",
+        "FAST_UI_MAX_PENDING": "300",
+        "WINDOW_RENDER_WORKERS": "1",
+        "WINDOW_RENDER_MAX_PENDING_KEYS": "256",
+    "UI_MAX_PENDING": "300",
+    "CALLBACK_ACK_WORKERS": "1",
+    "NAVIGATION_UI_WORKERS": "1",
+    "NAVIGATION_UI_MAX_PENDING": "256",
     "FAST_TELEGRAM_CHAT_GAP": "0.03",
     "TELEGRAM_GLOBAL_MIN_GAP": "0.05",
     "UI_CLEANUP_WORKERS": "1",
     "UI_DELETE_WORKERS": "1",
-    "UI_DELETE_MAX_PENDING": "180",
-    "R26_TRACE_RING_ROWS": "600",
-    "R26_TRACE_EXPORT_ROWS": "900",
+    "UI_DELETE_MAX_PENDING": "400",
+    "R26_TRACE_RING_ROWS": "400",
+    "R26_TRACE_EXPORT_ROWS": "600",
     "R27_FAST_USER_PRIORITY_SEC": "2.0",
     "R27_SNAPSHOT_USER_QUIET_SEC": "30",
     "R27_STATE_MIRROR_DELAY_SEC": "30",
@@ -87,7 +96,7 @@ FRONT_INTERNAL_ENV: Dict[str, str] = {
     "R28_STATE_MIRROR_DELAY_SEC": "30",
     "R28_FULL_SNAPSHOT_MIN_INTERVAL_SEC": "300",
     "R32_EVENT_STREAM_ENABLED": "1",
-    "R32_EVENT_QUEUE_MAX": "600",
+    "R32_EVENT_QUEUE_MAX": "768",
     "R40_EVENT_DB_BUSY_MS": "120",
     "R32_EVENT_BATCH_DELAY_SEC": "0.65",
     "R32_EVENT_BATCH_MAX": "192",
@@ -107,26 +116,30 @@ FRONT_INTERNAL_ENV: Dict[str, str] = {
     # R35 aliases remain only for rollback compatibility.
     "R24_LOWRAM_EVICT_RSS_MB": "210",
     "SQLITE_READER_CACHE_KB": "128",
+    "SQLITE_READER_POOL_SIZE": "4",
     "SQLITE_READER_MMAP_MB": "0",
     "FAST_LOG_QUEUE_MAX": "500",
-    "SHORT_CALLBACK_LOCAL_HOT_MAX": "2048",
-    "CALLBACK_DURABLE_MAX_PENDING": "300",
-    "CALLBACK_JOURNAL_MAX_PENDING": "160",
-    "BOT_JOURNAL_FILE_PENDING_MAX": "300",
-    "WINDOW_DIAGNOSTICS_TAIL_LIMIT": "500",
-    "WINDOW_DIAGNOSTICS_STATE_LIMIT": "700",
+    "SHORT_CALLBACK_LOCAL_HOT_MAX": "1024",
+    "CALLBACK_DURABLE_MAX_PENDING": "500",
+    "CALLBACK_JOURNAL_MAX_PENDING": "250",
+    "BOT_JOURNAL_FILE_PENDING_MAX": "600",
+    "WINDOW_DIAGNOSTICS_TAIL_LIMIT": "180",
+    "WINDOW_DIAGNOSTICS_STATE_LIMIT": "240",
     "WEBHOOK_DONE_TTL_SECONDS": "240",
     "UI_CLEANUP_MAX_PENDING": "400",
     "WEBHOOK_WORKERS": "2",
+    "FINANCE_WORKERS": "1",
+    "FIN_FORWARD_WORKERS": "1",
+    "REMOVED_CHAT_RAM_GC_ENABLED": "1",
     "WEBHOOK_MAX_CONNECTIONS": "4",
     "WAITRESS_THREADS": "2",
-    "WEBHOOK_INBOX_WRITE_QUEUE_MAX": "500",
+    "WEBHOOK_INBOX_WRITE_QUEUE_MAX": "1000",
     "WEBHOOK_STUCK_WARN_SECONDS": "5",
     "R25_TRACE_SLOW_LOCK_SEC": "0.020",
     "DELTA_WORKERS": "1",
     "BACKGROUND_WORKERS": "1",
     # OCH12.31: quick diagnostic/download lane is isolated from heavy exports.
-    "FAST_EXPORT_WORKERS": "2",
+    "FAST_EXPORT_WORKERS": "1",
     "FAST_EXPORT_MAX_PENDING": "30",
     "EXPORT_WORKERS": "1",
     "EXPORT_MAX_PENDING": "24",
@@ -161,8 +174,8 @@ FRONT_INTERNAL_ENV: Dict[str, str] = {
     "WORKER_EVENT_RETENTION_SEC": "604800",
 
     # Peer / event-journal transport
-    "PEER_PING_ENABLED": "0",
-    "PEER_PING_INTERVAL_SEC": "120",
+    "PEER_PING_ENABLED": "1",
+    "PEER_PING_INTERVAL_SEC": "45",
     "SPLIT_WORKER_SYNC_ENABLED": "1",
     "SPLIT_STATE_SYNC_DELAY_SEC": "8",
     "SPLIT_STATE_SYNC_MIN_INTERVAL_SEC": "30",
@@ -191,24 +204,24 @@ FRONT_INTERNAL_ENV: Dict[str, str] = {
     "SPLIT_RESTORE_BOOT_ATTEMPTS": "3",
     "SPLIT_FORCE_BOOT_RESTORE": "0",
     "SPLIT_ALLOW_EMPTY_BOOT": "1",
-    "SPLIT_EMERGENCY_MEGA": "0",
+    "SPLIT_EMERGENCY_MEGA": "1",
 
     # MEGA credentials may exist for BOOT/manual recovery, but automatic FAST
     # MEGA runtime is cold-standby by default on the single 512 MB Render.
     "MEGA_ENABLED": "0",
     "MEGA_AUTORESTORE": "0",
     "OCH1225_FAST_AUTO_MEGA": "0",
-    "OCH1226_MEGA_DURABILITY_ENABLED": "0",
-    "OCH1226_MEGA_ONLY_RESTORE": "0",
+    "OCH1226_MEGA_DURABILITY_ENABLED": "1",
+    "OCH1226_MEGA_ONLY_RESTORE": "1",
     "OCH1226_REDIS_RESTORE_ENABLED": "0",
     "OCH1226_MEGA_NO_DELETE": "1",
     "OCH1226_MEGA_FULL_HOURS": "6",
     "OCH1226_MEGA_DELTA_FLUSH_SEC": "90",
     "OCH1227_EMPTY_BOOT_NOTIFY_OWNER": "1",
     "OCH1227_EMPTY_BOOT_PROTECT_UNCERTAIN_MEGA": "1",
-    "R32_EVENT_COALESCE_MAX": "4096",
+    "R32_EVENT_COALESCE_MAX": "768",
     "R32_EVENT_QUEUE_FULL_LOG_SEC": "60",
-    "MEGA_ZERO_RESIDENT_DELAY_SEC": "25",
+    "MEGA_ZERO_RESIDENT_DELAY_SEC": "15",
     "MEGA_PARALLEL_MAX": "1",
     "TG_DURABLE_ENABLED": "0",
     "TELEGRAM_DURABLE_ENABLED": "0",
@@ -381,15 +394,8 @@ def install_internal_runtime_config(role: str) -> Dict[str, str]:
         if str(key) in {"MEGA_ENABLED", "REDIS_ENABLED", "TELEGRAM_BACKUP_ENABLED", "REDIS_START_ENABLED", "REDIS_URL"}:
             continue
         os.environ[str(key)] = str(value)
-    fast_runtime_mega_disabled = role == "front"
-    if role == "front":
-        # OCH13: R1 never launches/owns MEGAcmd. Remote durability/MEGA is R2 work.
-        os.environ["FAST_RUNTIME_MEGA_DISABLED"] = "1"
-        os.environ["MEGA_ENABLED"] = "0"
-        os.environ["MEGA_AUTORESTORE"] = "0"
-        os.environ["SPLIT_EMERGENCY_MEGA"] = "0"
-    else:
-        os.environ["MEGA_ENABLED"] = "1" if _MEGA_RENDER_ENABLED else "0"
+    fast_runtime_mega_disabled = role == "front" and str(os.environ.get("FAST_RUNTIME_MEGA_DISABLED", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
+    os.environ["MEGA_ENABLED"] = "1" if (_MEGA_RENDER_ENABLED and not fast_runtime_mega_disabled) else "0"
     os.environ["TELEGRAM_BACKUP_ENABLED"] = "1" if _TELEGRAM_BACKUP_RENDER_ENABLED else "0"
     os.environ["MEGA_STRICT_ROOT"] = "1"
     os.environ["MEGA_LEGACY_BACKUP_DIRS"] = ""
