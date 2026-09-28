@@ -1,6 +1,6 @@
 # v262
 #!/usr/bin/env python3
-"""OCHNIS 13.5 Render #1 launcher: R1 is primary; R2 is optional.
+"""OCHNIS 13.6 Render #1 launcher: R1 is primary; R2 is optional.
 
 Startup policy:
 - reuse a valid local SQLite immediately;

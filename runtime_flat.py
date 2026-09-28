@@ -1,5 +1,5 @@
 # OCHNIS_13 FLAT RUNTIME - generated from OCH12.36
-OCHNIS_RELEASE = "очнись_13.5"
+OCHNIS_RELEASE = "очнись_13.6"
 
 # ===== SOURCE 01_core_data.py =====
 # OCH12.34: infrastructure/wiring shell; business function bodies live only in 11-14 owner files.
@@ -2183,7 +2183,7 @@ RELEASE_SERIES = 'выс'
 RELEASE_NUMBER = 264
 VERSION = f'{RELEASE_SERIES}-{RELEASE_NUMBER}'
 BOT_FILE_NAME = os.path.basename(__file__) if '__file__' in globals() else 'bot_v130_modular_split.py'
-BOT_DISPLAY_NAME = 'очнись_13.5'
+BOT_DISPLAY_NAME = 'очнись_13.6'
 
 def _current_source_path() -> str:
     """Single-file path in legacy mode; reconstructed full source in modular mode."""
@@ -46853,20 +46853,17 @@ def reset_chat_data(chat_id: int):
 
 
 def _r64_restore_redis_seal_text(reason: str) -> str:
-    # R81: Redis and compact MEGA are peer recovery anchors; R2 is optional.
+    """Compatibility name; OCH13.6 seal is Telegram/MEGA only."""
     fn = globals().get('r64_publish_restore_snapshot_v271')
-    if not callable(fn):
-        return '\n⚠️ Recovery checkpoint helper недоступен.'
-    try:
-        row = fn(str(reason or 'restore')) or {}
-    except Exception as exc:
-        return f'\n⚠️ Recovery checkpoint НЕ закреплён: {type(exc).__name__}: {str(exc)[:220]}'
-    if not row.get('required'):
-        return '\nℹ️ Внешний recovery checkpoint не требуется.'
+    if not callable(fn): return '\n⚠️ Recovery checkpoint helper недоступен.'
+    try: row = fn(str(reason or 'restore')) or {}
+    except Exception as exc: return f'\n⚠️ Recovery checkpoint НЕ закреплён: {type(exc).__name__}: {str(exc)[:220]}'
     if row.get('ok'):
-        return '\n☁️ Recovery checkpoint: полный SQLite закреплён в доступном Redis/MEGA контуре.'
+        bits=[]
+        if row.get('telegram_ok'): bits.append('Telegram')
+        if row.get('mega_scheduled'): bits.append('MEGA queued')
+        return '\n☁️ Recovery checkpoint: ' + (' + '.join(bits) or 'закреплён') + '.'
     return '\n⚠️ Recovery checkpoint НЕ закреплён: ' + str(row.get('detail') or 'unknown')[:300]
-
 
 def handle_document(msg):
     global restore_mode, data
@@ -46887,12 +46884,12 @@ def handle_document(msg):
         if maybe_prompt_owner_for_json_restore(msg, fname):
             return
     if restore_mode is not None and restore_mode == chat_id:
-        if not (fname.endswith('.json') or fname.endswith('.ison') or fname.endswith('.csv') or fname.endswith('.gz') or fname.endswith('.bin')):
-            send_and_auto_delete(chat_id, '⚠️ В режиме восстановления принимаются GZ / BIN / JSON / ISON / CSV.')
+        if not (fname.endswith('.json') or fname.endswith('.ison') or fname.endswith('.csv') or fname.endswith('.gz') or fname.endswith('.bin') or fname.endswith('.sqlite3') or fname.endswith('.sqlite') or fname.endswith('.db')):
+            send_and_auto_delete(chat_id, '⚠️ В режиме восстановления принимаются SQLite / GZ / BIN / JSON / ISON / CSV.')
             return
-        if fname.endswith(('.gz', '.bin')):
+        if fname.endswith(('.gz', '.bin', '.sqlite3', '.sqlite', '.db')):
             try:
-                helper_name = 'v182_prepare_bin_restore_document' if fname.endswith('.bin') else 'v182_prepare_gz_restore_document'
+                helper_name = ('v182_prepare_bin_restore_document' if fname.endswith('.bin') else ('v182_prepare_sqlite_restore_document' if fname.endswith(('.sqlite3', '.sqlite', '.db')) else 'v182_prepare_gz_restore_document'))
                 prep = globals().get(helper_name)
                 if not callable(prep):
                     raise RuntimeError(f'{helper_name} не загружен')
@@ -58031,94 +58028,77 @@ def _v241_restore_storage_barrier_end(epoch: int, success: bool) -> None:
         pass
 
 def _v153_backup_before_restore() -> str:
-    """R81: make the current live SQLite durable before destructive restore.
+    """OCH13.6 durable safety copy before destructive manual restore.
 
-    R2 is preferred when it owns durability, but it is never the only possible
-    backend. Redis FULL and direct R1 compact-MEGA are valid emergency anchors.
-    No 240-second dead-R2 wait is allowed.
+    Redis is cache-only and is never counted as a recovery anchor.  The live SQLite
+    must be durably copied to Telegram and/or MEGA before replacement.  R2 is optional.
     """
     _recovery_was_active = bool(globals().get('_V240_RECOVERY_AUTHORITY_ACTIVE', False))
     globals()['_V240_RECOVERY_AUTHORITY_ACTIVE'] = True
-    folder = _v153_tempfile.mkdtemp(prefix='r81_pre_restore_')
-    raw = _v153_os.path.join(folder, 'pre_restore.sqlite3')
-    gz = raw + '.gz'
+    folder = _v153_tempfile.mkdtemp(prefix='och136_pre_restore_')
+    raw = _v153_os.path.join(folder, 'pre_restore.sqlite3'); gz = raw + '.gz'
     results = []
     try:
         SQLITE.backup_to(raw)
         with open(raw, 'rb') as fin, _v153_gzip.open(gz, 'wb', compresslevel=5) as fout:
             _v153_shutil.copyfileobj(fin, fout, 1024 * 1024)
-        try:
-            with open(gz, 'rb') as fh:
-                payload_size = len(fh.read())
-        except Exception:
-            payload_size = 0
+        payload_size = int(_v153_os.path.getsize(gz) if _v153_os.path.exists(gz) else 0)
 
-        # 1) Redis: canonical FULL of the exact pre-restore live state. This is a
-        # valid recovery anchor by itself and does not depend on R2.
-        redis_ok = False
-        redis_fn = globals().get('_split_cache_snapshot_to_redis_v266')
-        if callable(redis_fn):
+        # 1) Telegram durable safety slot: independent of MEGA/R2/Redis.
+        tg_ok = False
+        tg_fn = globals().get('_och136_store_manual_restore_telegram')
+        if callable(tg_fn):
             try:
-                redis_ok = bool(redis_fn('manual_restore:pre_restore', verify=True, use_render_url=False))
-                results.append(('redis', redis_ok, str((globals().get('_SPLIT_STATE') or {}).get('redis_fallback_last_error') or 'ok')))
+                tg_ok, detail = tg_fn(gz, 'manual_restore:pre_restore', pre_restore=True)
+                tg_ok = bool(tg_ok); results.append(('telegram', tg_ok, str(detail)[:240]))
             except Exception as exc:
-                results.append(('redis', False, f'{type(exc).__name__}: {str(exc)[:180]}'))
+                results.append(('telegram', False, f'{type(exc).__name__}: {str(exc)[:180]}'))
 
-        # 2) Direct R1 named MEGA pre_restore when emergency ownership is on R1.
+        # 2) Direct R1 compact MEGA anchor when MEGA credentials/CLI exist.
         r1_mega_ok = False
-        route_fn = globals().get('_r71_route_is_fast')
-        route_fast = False
-        if callable(route_fn):
-            try:
-                route_fast = bool(route_fn('mega') or route_fn('checkpoints') or route_fn('durability'))
-            except Exception:
-                route_fast = False
         compact_fn = globals().get('_r80_store_pre_restore_gz')
-        if (not redis_ok) and route_fast and callable(compact_fn):
+        ready_fn = globals().get('_r221_manual_mega_ready')
+        can_r1 = bool(callable(compact_fn) and (not callable(ready_fn) or bool(ready_fn())))
+        if can_r1:
             try:
                 r1_mega_ok, detail = compact_fn(gz, 'manual_restore')
-                r1_mega_ok = bool(r1_mega_ok)
-                results.append(('r1-mega', r1_mega_ok, str(detail)[:220]))
+                r1_mega_ok = bool(r1_mega_ok); results.append(('r1-mega', r1_mega_ok, str(detail)[:240]))
             except Exception as exc:
                 results.append(('r1-mega', False, f'{type(exc).__name__}: {str(exc)[:180]}'))
 
-        # 3) Normal R2 -> MEGA path, but bounded. A dead R2 must not freeze restore.
+        # 3) Optional R2->MEGA fallback only when direct R1 MEGA did not succeed.
         heavy_ok = False
-        if (not redis_ok) and (not route_fast):
+        if not r1_mega_ok:
             base_fn = globals().get('_split_peer_base'); headers_fn = globals().get('_split_headers')
             base = str(base_fn() if callable(base_fn) else '').rstrip('/')
             if base and callable(headers_fn):
                 try:
-                    with open(gz, 'rb') as fh:
-                        payload = fh.read()
-                    headers = {**headers_fn('ochnis-12.5-pre-restore'), 'Content-Type':'application/gzip', 'X-Pre-Restore-Reason':'manual_restore'}
+                    with open(gz, 'rb') as fh: payload = fh.read()
+                    headers = {**headers_fn('ochnis-13.6-pre-restore'), 'Content-Type':'application/gzip', 'X-Pre-Restore-Reason':'manual_restore'}
                     response = requests.post(base + '/internal/pre-restore/upload', data=payload, headers=headers, timeout=(2.5, 20.0))
                     try: body = response.json() if response.content else {}
                     except Exception: body = {}
                     heavy_ok = bool(200 <= int(response.status_code) < 300 and bool((body or {}).get('ok')) and bool((body or {}).get('mega_stored')))
-                    results.append(('r2-mega', heavy_ok, (str((body or {}).get('filename') or '') if heavy_ok else f'HTTP {response.status_code}: {str(body or response.text)[:180]}')))
+                    results.append(('r2-mega', heavy_ok, str((body or {}).get('filename') or (f'HTTP {response.status_code}: '+str(body or response.text)[:160]))[:240]))
                 except Exception as exc:
                     results.append(('r2-mega', False, f'{type(exc).__name__}: {str(exc)[:180]}'))
 
-        durable_ok = bool(redis_ok or r1_mega_ok or heavy_ok)
+        durable_ok = bool(tg_ok or r1_mega_ok or heavy_ok)
         if not durable_ok:
-            detail = '; '.join(f'{name}={int(ok)}:{msg}' for name, ok, msg in results) or 'no durable backend configured'
-            raise RuntimeError('pre_restore не закреплён: ' + detail[:700])
-
+            detail = '; '.join(f'{name}={int(ok)}:{msg}' for name, ok, msg in results) or 'Telegram/MEGA recovery backend unavailable'
+            raise RuntimeError('pre_restore не закреплён: ' + detail[:800])
         backend = '+'.join(name for name, ok, _ in results if ok) or 'unknown'
         SQLITE.set_meta('restore_control_v240', 'last_pre_restore', {
             'at': now_local().isoformat(timespec='microseconds'), 'durable': True,
-            'backend': backend, 'size': int(payload_size), 'local_path': raw,
+            'backend': backend, 'size': payload_size, 'local_path': raw,
+            'redis_authority': False,
             'details': {name: {'ok': bool(ok), 'detail': str(detail)[:220]} for name, ok, detail in results},
         })
-        try:
-            bot_journal('pre_restore_r81', int(OWNER_ID or 0) or None, f'durable=1; backend={backend}; size={payload_size}', 'INFO')
-        except Exception:
-            pass
+        try: bot_journal('pre_restore_och136', int(OWNER_ID or 0) or None, f'durable=1; backend={backend}; size={payload_size}', 'INFO')
+        except Exception: pass
         return folder
     except Exception:
-        _v153_shutil.rmtree(folder, ignore_errors=True)
-        raise
+        _v153_shutil.rmtree(folder, ignore_errors=True); raise
     finally:
         globals()['_V240_RECOVERY_AUTHORITY_ACTIVE'] = bool(_recovery_was_active or globals().get('_V241_RESTORE_ACTIVE', False))
 
@@ -58587,10 +58567,10 @@ def _v153_execute_restore(token: str, mode: str, call) -> bool:
         checkpoint_ok = bool((seal_result or {}).get('ok'))
         mega_scheduled = bool((seal_result or {}).get('mega_scheduled'))
         suffix = '\n✅ Восстановленное состояние принято локально.'
-        if bool((seal_result or {}).get('redis_ok')):
-            suffix += '\n🧱 Redis FULL закреплён сразу.'
+        if bool((seal_result or {}).get('telegram_ok')):
+            suffix += '\n🧱 Telegram durable checkpoint закреплён сразу.'
         elif checkpoint_required:
-            suffix += '\n⚠️ Redis FULL не закреплён: ' + str((seal_result or {}).get('detail') or 'unknown')[:260]
+            suffix += '\n⚠️ Telegram checkpoint не закреплён: ' + str((seal_result or {}).get('detail') or 'unknown')[:260]
         if mega_scheduled:
             suffix += '\n☁️ MEGA checkpoint отложен до снижения RAM; callback его не ждёт.'
         headline = '✅ Восстановление завершено.' if (checkpoint_ok or mega_scheduled or not checkpoint_required) else '⚠️ База восстановлена локально; внешний checkpoint будет повторён позже.'
@@ -59585,8 +59565,7 @@ def _v242_mega_catalog_entry(token: str) -> dict:
 def _v242_restore_selected_mega_database(token: str, chat_id: int) -> dict:
     """R65 exact point-in-time restore selected in the all-MEGA browser.
 
-    FAST never logs into MEGA when MEGA_ENABLED=0.  The selected file is streamed from
-    authenticated HEAVY, validated locally, then FAST seals the accepted SQLite into Redis.
+    Manual recovery may use authenticated HEAVY or direct R1 MEGA control-plane even when normal MEGA residency is off. The selected file is validated locally, then sealed to Telegram/MEGA; Redis is not a recovery authority.
     """
     browser_entry = globals().get('_v265_mdb_entry')
     row = dict(browser_entry(token) or {}) if callable(browser_entry) else {}
@@ -59615,8 +59594,8 @@ def _v242_restore_selected_mega_database(token: str, chat_id: int) -> dict:
             fetch = globals().get('_v265_heavy_download_mega_file')
             if callable(fetch):
                 downloaded = str(fetch(remote, work) or '')
-            elif mega_is_configured():
-                res = _mega_run('mega-get', [remote, work], check=False, timeout=max(float(MEGA_TIMEOUT), 240.0))
+            elif mega_is_configured(control_plane=True):
+                res = _mega_run('mega-get', [remote, work], check=False, timeout=max(float(MEGA_TIMEOUT), 240.0), control_plane=True)
                 if res.returncode != 0:
                     raise RuntimeError('Не удалось скачать выбранную базу MEGA')
                 found = [str(x) for x in Path(work).rglob('*') if x.is_file()]
@@ -81046,6 +81025,128 @@ def _v182_download_restore_document(document) -> tuple[str, str]:
             fh.write(raw)
     return (path, folder)
 
+def _och136_store_manual_restore_telegram(source_gz: str | None=None, reason: str='manual_restore', *, pre_restore: bool=False) -> tuple[bool, str]:
+    """Durable Telegram safety copy for manual restore.
+
+    Redis is intentionally not a recovery backend.  This helper gives destructive
+    manual restore a safety anchor even when R2/MEGA are temporarily unavailable.
+    A stable Telegram slot is preferred; direct BACKUP_CHAT_ID delivery is fallback.
+    """
+    import tempfile as _tmp, gzip as _gz, shutil as _sh, io as _io, os as _os
+    folder = ''
+    try:
+        path = str(source_gz or '')
+        if not path:
+            folder = _tmp.mkdtemp(prefix='och136_tg_restore_')
+            raw = _os.path.join(folder, 'live.sqlite3')
+            path = raw + '.gz'
+            SQLITE.backup_to(raw)
+            with open(raw, 'rb') as fin, _gz.open(path, 'wb', compresslevel=5) as fout:
+                _sh.copyfileobj(fin, fout, 1024 * 1024)
+        with open(path, 'rb') as fh:
+            payload = fh.read()
+        if not payload:
+            return False, 'Telegram pre_restore: пустой snapshot'
+        stamp = re.sub(r'[^0-9]', '', now_local().isoformat(timespec='seconds'))[:14]
+        visible = ('BOT_PRE_RESTORE_' if pre_restore else 'BOT_MANUAL_RESTORE_') + stamp + '.sqlite3.gz'
+        slot = 'durable:manual_pre_restore' if pre_restore else 'durable:manual_restore_latest'
+        upsert = globals().get('telegram_stable_document_upsert_v236')
+        primary = globals().get('telegram_durable_primary_v234')
+        if callable(upsert) and (not callable(primary) or bool(primary())):
+            row = upsert(payload, visible, ('🛟 pre_restore перед ручным восстановлением' if pre_restore else '🧱 SQLite после ручного восстановления'), slot_key=slot, persist_head=True, reason=str(reason or 'manual_restore')) or {}
+            mid = int((row or {}).get('message_id') or 0)
+            if mid:
+                return True, f'Telegram stable slot message_id={mid}'
+        target = int(globals().get('BACKUP_CHAT_ID') or globals().get('OWNER_ID') or 0)
+        if target:
+            buf = _io.BytesIO(payload); buf.name = visible; buf.seek(0)
+            sender = globals().get('_tg_call_retry')
+            if callable(sender):
+                sent = sender(bot.send_document, target, buf, caption=('🛟 pre_restore' if pre_restore else '🧱 manual restore checkpoint'), timeout=120, purpose='manual_restore_telegram_backup')
+            else:
+                sent = bot.send_document(target, buf, caption=('🛟 pre_restore' if pre_restore else '🧱 manual restore checkpoint'))
+            mid = int(getattr(sent, 'message_id', 0) or 0)
+            if mid:
+                return True, f'Telegram backup chat message_id={mid}'
+        return False, 'Telegram durable storage не настроен'
+    except Exception as exc:
+        return False, f'{type(exc).__name__}: {str(exc)[:260]}'
+    finally:
+        if folder:
+            try: _sh.rmtree(folder, ignore_errors=True)
+            except Exception: pass
+
+
+def v182_prepare_sqlite_restore_document(msg, document=None) -> bool:
+    """Prepare raw .sqlite3/.sqlite/.db exactly like a GZ full snapshot."""
+    import os as _os, gzip as _gzip, shutil as _shutil
+    uid = _v153_actor_id(msg)
+    chat_id = int(msg.chat.id)
+    document = document or getattr(getattr(msg, 'reply_to_message', None), 'document', None)
+    if not document:
+        raise RuntimeError('Не найден SQLite-файл')
+    name = str(getattr(document, 'file_name', '') or '').lower()
+    if not name.endswith(('.sqlite3', '.sqlite', '.db')):
+        raise RuntimeError('Нужен полный SQLite: .sqlite3 / .sqlite / .db')
+    uploaded = folder = raw = archive = None
+    try:
+        uploaded, folder = _v182_download_restore_document(document)
+        with open(uploaded, 'rb') as fh:
+            magic = fh.read(16)
+        if not magic.startswith(b'SQLite format 3\x00'):
+            raise RuntimeError('Файл не является SQLite database')
+        archive = _os.path.join(folder, 'restore_from_sqlite.sqlite3.gz')
+        with open(uploaded, 'rb') as fin, _gzip.open(archive, 'wb', compresslevel=3) as fout:
+            _shutil.copyfileobj(fin, fout, 1024 * 1024)
+        manifest, raw = _v153_validate_restore_gz(archive)
+        scope = str(manifest.get('scope') or 'global')
+        tenant_id = str(manifest.get('tenant_id') or _v153_tenant_for_chat(chat_id))
+        if scope == 'global' and (not _v153_platform_owner(uid)):
+            raise RuntimeError('Глобальное восстановление доступно только владельцу платформы')
+        if scope == 'tenant' and (not _v153_can_manage_tenant(uid, tenant_id)):
+            current = _v153_tenant_for_chat(chat_id)
+            if not _v153_can_manage_tenant(uid, current):
+                raise RuntimeError('Нельзя восстановить чужое пространство')
+            tenant_id = current
+        token = _v153_hashlib.sha256(f'och136sqlite:{uid}:{chat_id}:{_v153_time.time_ns()}'.encode()).hexdigest()[:16]
+        with _V153_LOCK:
+            _V153_RESTORE_PENDING[token] = {'uid': uid, 'chat_id': chat_id, 'gz': archive, 'raw': raw, 'manifest': manifest, 'tenant_id': tenant_id, 'created': _v153_time.time(), 'upload_folder': folder}
+        text = f"🧪 SQLite-файл проверен.\n\nВерсия: {manifest.get('bot_version') or 'не указана'}\nОбласть: {('весь бот' if scope == 'global' else 'пространство')}\nЧатов: {manifest.get('chat_count', 0)}\nФинансовых записей: {manifest.get('record_count', 'см. snapshot')}\nСоздан: {manifest.get('created_at') or 'не указано'}\n\nПеред применением будет создан durable pre_restore. После подтверждения scope будет полностью ЗАМЕНЁН."
+        bot.reply_to(msg, text, reply_markup=_v153_restore_keyboard(token, scope))
+        global restore_mode
+        restore_mode = None
+        data.pop('_restore_mode_chat_v150', None)
+        return True
+    except Exception:
+        if folder and (not raw):
+            try: _shutil.rmtree(folder, ignore_errors=True)
+            except Exception: pass
+        raise
+
+
+def _och136_open_mega_restore_browser(chat_id: int, path: str='/') -> bool:
+    """Open manual MEGA recovery browser; actual listing is background and R1-capable."""
+    cid = int(chat_id)
+    try:
+        msg = bot.send_message(cid, window_mark('🗄 БАЗЫ MEGA / ВОССТАНОВЛЕНИЕ\n\n⏳ Читаю папку MEGA…', 'Ф233'))
+        pool = globals().get('RECOVERY_TASK_POOL') or globals().get('GENERAL_TASK_POOL')
+        job = globals().get('_v265_mdb_refresh_job')
+        if not callable(job):
+            raise RuntimeError('MEGA browser job не загружен')
+        if pool is not None and hasattr(pool, 'submit_unique'):
+            ok = bool(pool.submit_unique(f'och136-mega-browser:{cid}', job, cid, int(msg.message_id), str(path or '/'), 0))
+        elif pool is not None:
+            ok = bool(pool.submit(f'och136-mega-browser:{cid}', job, cid, int(msg.message_id), str(path or '/'), 0))
+        else:
+            threading.Thread(target=job, args=(cid, int(msg.message_id), str(path or '/'), 0), daemon=True, name='och136-mega-browser').start(); ok = True
+        if not ok:
+            raise RuntimeError('очередь recovery занята')
+        return True
+    except Exception as exc:
+        send_and_auto_delete(cid, '❌ Не удалось открыть MEGA-папки: ' + str(exc)[:500], 90)
+        return False
+
+
 def v182_prepare_gz_restore_document(msg, document=None) -> bool:
     """Prepare a .gz restore from a document sent after /restore or replied to by /restore."""
     uid = _v153_actor_id(msg)
@@ -81142,36 +81243,80 @@ def v182_prepare_bin_restore_document(msg, document=None) -> bool:
         raise
 
 def v182_cmd_restore(msg):
-    """Unified /restore: reply to GZ/BIN, or enter upload mode for GZ/BIN/JSON/ISON/CSV."""
-    try:
-        update_chat_info_from_message(msg)
-    except Exception:
-        pass
-    try:
-        schedule_command_delete(msg)
-    except Exception:
-        pass
-    uid = _v153_actor_id(msg)
-    chat_id = int(msg.chat.id)
+    """Unified manual restore entry.
+
+    /restore                -> upload mode
+    /restore latest         -> exact canonical MEGA current generation
+    /restore mega|folder    -> browse every MEGA folder and pick an exact DB
+    Reply /restore to GZ/BIN/raw SQLite -> validate and confirm immediately.
+    """
+    try: update_chat_info_from_message(msg)
+    except Exception: pass
+    try: schedule_command_delete(msg)
+    except Exception: pass
+    uid = _v153_actor_id(msg); chat_id = int(msg.chat.id)
     if not (_v153_platform_owner(uid) or _v153_can_manage_tenant(uid, _v153_tenant_for_chat(chat_id))):
-        bot.reply_to(msg, '⛔ Недостаточно прав для восстановления.')
+        bot.reply_to(msg, '⛔ Недостаточно прав для восстановления.'); return
+    raw_text = str(getattr(msg, 'text', '') or '')
+    arg = raw_text.split(None, 1)[1].strip().casefold() if len(raw_text.split(None, 1)) > 1 else ''
+    if arg in {'mega', 'folder', 'folders', 'папка', 'папки'}:
+        if not _v153_platform_owner(uid):
+            bot.reply_to(msg, '⛔ MEGA recovery-browser доступен только основному владельцу.'); return
+        _och136_open_mega_restore_browser(chat_id, '/')
+        return
+    if arg in {'latest', 'current', 'последняя', 'последний'}:
+        if not _v153_platform_owner(uid):
+            bot.reply_to(msg, '⛔ Полное MEGA-восстановление доступно только основному владельцу.'); return
+        pool = globals().get('RECOVERY_TASK_POOL') or globals().get('GENERAL_TASK_POOL')
+        fn = globals().get('run_manual_mega_restore')
+        if not callable(fn):
+            bot.reply_to(msg, '❌ MEGA restore helper не загружен.'); return
+        ok = bool(pool and pool.submit(f'och136-restore-latest:{chat_id}', fn, chat_id)) if pool is not None else False
+        if not ok:
+            threading.Thread(target=fn, args=(chat_id,), daemon=True, name='och136-restore-latest').start()
+        send_and_auto_delete(chat_id, '☁️ Ручное восстановление latest/current_manifest запущено.', 30)
         return
     replied_doc = getattr(getattr(msg, 'reply_to_message', None), 'document', None)
     if replied_doc is not None:
         replied_name = str(getattr(replied_doc, 'file_name', '') or '').lower()
-        if replied_name.endswith(('.gz', '.bin')):
-            try:
-                if replied_name.endswith('.bin'):
-                    v182_prepare_bin_restore_document(msg, replied_doc)
-                else:
-                    v182_prepare_gz_restore_document(msg, replied_doc)
-            except Exception as exc:
-                bot.reply_to(msg, f'❌ Файл не подготовлен к восстановлению:\n{v153_redact_text(exc)[:700]}')
-            return
+        try:
+            if replied_name.endswith('.bin'):
+                v182_prepare_bin_restore_document(msg, replied_doc); return
+            if replied_name.endswith('.gz'):
+                v182_prepare_gz_restore_document(msg, replied_doc); return
+            if replied_name.endswith(('.sqlite3', '.sqlite', '.db')):
+                v182_prepare_sqlite_restore_document(msg, replied_doc); return
+        except Exception as exc:
+            bot.reply_to(msg, f'❌ Файл не подготовлен к восстановлению:\n{v153_redact_text(exc)[:700]}'); return
     global restore_mode
     restore_mode = chat_id
     data.pop('_restore_mode_chat_v150', None)
-    send_and_auto_delete(chat_id, '📥 Режим восстановления включён — СТРОГАЯ ЗАМЕНА ИЗ ФАЙЛА.\n\nТекущее состояние будет сначала сохранено в pre_restore, затем выбранный scope будет заменён ровно данными файла. Никакого merge.\n\nТеперь отправьте ОДИН файл:\n• *.sqlite3.gz / *.gz — полный SQLite snapshot\n• *.bin — полный SQLite или gzip snapshot в BIN\n• *.json / *.ison — полный JSON/ISON backup (включая chat_<id>.json)\n• *.csv — CSV чата\n\nДля следующего файла снова отправьте /restore.\nОтмена: /restore_off', 30)
+    send_and_auto_delete(chat_id, '📥 Режим восстановления включён — СТРОГАЯ ЗАМЕНА ИЗ ФАЙЛА.\n\nТекущее состояние сначала сохраняется в durable pre_restore (Telegram и/или MEGA), затем выбранный scope заменяется данными файла. Никакого merge.\n\nОтправьте ОДИН файл:\n• *.sqlite3 / *.sqlite / *.db — полный raw SQLite\n• *.sqlite3.gz / *.gz — полный gzip SQLite snapshot\n• *.bin — полный SQLite или gzip snapshot в BIN\n• *.json / *.ison — полный JSON/ISON backup\n• *.csv — CSV чата\n\nДополнительно:\n/restore latest — canonical MEGA generation\n/restore mega — браузер папок MEGA\n/restore_off — отмена', 45)
+
+@bot.message_handler(commands=['restore_mega', 'restore_folder'])
+def och136_cmd_restore_mega_folder(msg):
+    try: schedule_command_delete(msg)
+    except Exception: pass
+    uid=_v153_actor_id(msg); cid=int(msg.chat.id)
+    if not _v153_platform_owner(uid):
+        send_and_auto_delete(cid,'⛔ MEGA recovery-browser доступен только основному владельцу.',30); return
+    _och136_open_mega_restore_browser(cid,'/')
+
+
+@bot.message_handler(commands=['restore_latest'])
+def och136_cmd_restore_latest(msg):
+    try: schedule_command_delete(msg)
+    except Exception: pass
+    uid=_v153_actor_id(msg); cid=int(msg.chat.id)
+    if not _v153_platform_owner(uid):
+        send_and_auto_delete(cid,'⛔ Полное MEGA-восстановление доступно только основному владельцу.',30); return
+    pool=globals().get('RECOVERY_TASK_POOL') or globals().get('GENERAL_TASK_POOL')
+    fn=globals().get('run_manual_mega_restore')
+    if not callable(fn):
+        send_and_auto_delete(cid,'❌ MEGA restore helper не загружен.',30); return
+    if pool is not None and pool.submit(f'och136-restore-latest:{cid}',fn,cid): return
+    threading.Thread(target=fn,args=(cid,),daemon=True,name='och136-restore-latest').start()
+
 
 def _v182_install_restore_handler() -> int:
     replaced = 0
@@ -82392,7 +82537,7 @@ def _v265_mdb_entry(token: str) -> dict:
         return dict(_V265_MEGA_BROWSER_TOKENS.get(str(token or ''), {}) or {})
 
 
-def _v265_peer_mega_request(path: str) -> dict:
+def _v265_peer_mega_request_legacy_unwired(path: str) -> dict:
     base_fn = globals().get('_split_peer_base')
     headers_fn = globals().get('_split_headers')
     base = str(base_fn() if callable(base_fn) else '').rstrip('/')
@@ -82519,7 +82664,7 @@ def mega_database_confirm_text_v242(token: str) -> str:
         f"Путь: {row.get('path') or '—'}\n\n"
         'FAST скачает файл из MEGA прямо на R1, проверит gzip/raw SQLite и PRAGMA quick_check. '
         'Только валидная SQLite полностью заменит рабочую базу без merge. Перед заменой создаётся pre_restore. '
-        'После успеха FAST сразу закрепит FULL snapshot в Redis и поставит compact MEGA checkpoint на R1.'
+        'После успеха FAST закрепит восстановленную SQLite в Telegram durable storage и поставит canonical MEGA checkpoint. Redis в recovery не участвует.'
     )[:3900]
 
 
@@ -82531,7 +82676,7 @@ def mega_database_confirm_keyboard_v242(token: str):
     return kb
 
 
-def _v265_heavy_download_mega_file(remote: str, workdir: str) -> str:
+def _v265_heavy_download_mega_file_legacy_unwired(remote: str, workdir: str) -> str:
     base_fn = globals().get('_split_peer_base')
     headers_fn = globals().get('_split_headers')
     base = str(base_fn() if callable(base_fn) else '').rstrip('/')
@@ -88449,39 +88594,32 @@ def _och1230_schedule_manual_mega_reanchor(reason='manual-restore', delay=2.0, r
 
 
 def r64_publish_restore_snapshot_v271(reason='restore'):
-    """OCH12.22: one light synchronous recovery seal, never two MEGA FULLs.
-
-    Redis FULL is the immediate restart anchor when REDIS_URL exists.  MEGA is re-anchored automatically after the local restore barrier and when memory allows it.
-    """
+    """OCH13.6 post-restore seal: Telegram + MEGA, Redis never as recovery authority."""
     results=[]
-    redis_configured=bool(_r61_effective_redis_url())
-    redis_ok=False
-    redis_fn=globals().get('_split_cache_snapshot_to_redis_v266')
-    if redis_configured and callable(redis_fn):
+    tg_ok=False
+    tg_fn=globals().get('_och136_store_manual_restore_telegram')
+    if callable(tg_fn):
         try:
-            redis_ok=bool(redis_fn('manual_restore:'+str(reason or 'restore')[:120],verify=True,use_render_url=False))
-            results.append(('redis',redis_ok,str((_SPLIT_STATE or {}).get('redis_fallback_last_error') or 'ok')[:240]))
+            tg_ok, detail=tg_fn(None,'manual_restore:'+str(reason or 'restore')[:120],pre_restore=False)
+            tg_ok=bool(tg_ok); results.append(('telegram',tg_ok,str(detail)[:240]))
         except Exception as exc:
-            results.append(('redis',False,f'{type(exc).__name__}: {str(exc)[:200]}'))
+            results.append(('telegram',False,f'{type(exc).__name__}: {str(exc)[:200]}'))
     mega_scheduled=False
     try:
-        # OCH12.31: every accepted manual restore becomes the new MEGA canonical
-        # lineage automatically.  Do not leave it LOCAL-PENDING for 150+ seconds.
         _split_os.environ['OCH1227_EMPTY_BOOT_MEGA_WRITE_GUARD']='0'
         _split_os.environ['OCH1230_EMPTY_BOOT_NEEDS_SEED']='0'
-        if _r80_mega_master_enabled() and _r71_route_is_fast('mega'):
+        if _r80_mega_master_enabled():
             mega_scheduled=bool(_och1230_schedule_manual_mega_reanchor('manual_restore:'+str(reason or 'restore')[:100],2.0,0))
     except Exception:
         mega_scheduled=False
-    required=bool(redis_configured)
-    ok=bool(redis_ok) if required else True
-    detail='; '.join(f'{name}={int(good)}:{msg}' for name,good,msg in results) or 'Redis recovery backend not configured'
+    required=True
+    ok=bool(tg_ok or mega_scheduled)
+    detail='; '.join(f'{name}={int(good)}:{msg}' for name,good,msg in results) or 'Telegram durable unavailable'
     try:
-        bot_journal('r81_restore_reanchor',int(OWNER_ID or 0),f'ok={int(ok)}; redis={int(redis_ok)}; mega_scheduled={int(mega_scheduled)}; reason={str(reason)[:120]}; {detail[:360]}')
-    except Exception:
-        pass
-    return {'required':required,'ok':ok,'detail':detail[:700],'backend':'redis' if redis_ok else 'local',
-            'redis_ok':bool(redis_ok),'checkpoint_ok':False,'mega_scheduled':bool(mega_scheduled)}
+        bot_journal('och136_restore_reanchor',int(OWNER_ID or 0),f'ok={int(ok)}; telegram={int(tg_ok)}; mega_scheduled={int(mega_scheduled)}; redis_authority=0; reason={str(reason)[:120]}; {detail[:360]}')
+    except Exception: pass
+    return {'required':required,'ok':ok,'detail':detail[:700],'backend':'telegram' if tg_ok else 'local',
+            'telegram_ok':bool(tg_ok),'redis_ok':False,'checkpoint_ok':bool(tg_ok),'mega_scheduled':bool(mega_scheduled)}
 
 def _och111_hot_ui_busy():
     try:
@@ -95941,37 +96079,62 @@ def _r71_local_mega_list(path):
 
 
 def _v265_peer_mega_request(path):
-    if _r71_route_is_fast('mega'):
-        return _r71_local_mega_list(path)
-    if callable(_R71_REMOTE_MEGA_BROWSER_REQUEST):
-        return _R71_REMOTE_MEGA_BROWSER_REQUEST(path)
-    raise RuntimeError('Render #2 MEGA browser unavailable')
-
+    """OCH13.6 MEGA folder browser: preferred route first, then direct R1 control-plane."""
+    errors=[]
+    if not _r71_route_is_fast('mega') and callable(_R71_REMOTE_MEGA_BROWSER_REQUEST):
+        try:
+            body=_R71_REMOTE_MEGA_BROWSER_REQUEST(path)
+            if isinstance(body,dict): body.setdefault('owner','R2_HEAVY')
+            return body
+        except Exception as exc:
+            errors.append('R2 '+type(exc).__name__+': '+str(exc)[:240])
+    try:
+        body=_r71_local_mega_list(path)
+        if isinstance(body,dict): body['fallback_from_r2']=bool(errors)
+        return body
+    except Exception as exc:
+        errors.append('R1 '+type(exc).__name__+': '+str(exc)[:300])
+    if _r71_route_is_fast('mega') and callable(_R71_REMOTE_MEGA_BROWSER_REQUEST):
+        try:
+            body=_R71_REMOTE_MEGA_BROWSER_REQUEST(path)
+            if isinstance(body,dict): body.setdefault('owner','R2_HEAVY_FALLBACK')
+            return body
+        except Exception as exc:
+            errors.append('R2 fallback '+type(exc).__name__+': '+str(exc)[:240])
+    raise RuntimeError('MEGA browser unavailable: '+'; '.join(errors)[:700])
 
 def _v265_heavy_download_mega_file(remote, workdir):
-    if not _r71_route_is_fast('mega'):
-        if callable(_R71_REMOTE_MEGA_DOWNLOAD): return _R71_REMOTE_MEGA_DOWNLOAD(remote, workdir)
-        raise RuntimeError('Render #2 MEGA download unavailable')
-    if not _r71_fast_mega_ready(): raise RuntimeError('R1 MEGA unavailable')
-    login = globals().get('mega_login_if_needed')
-    if callable(login): login(control_plane=True)
-    runner = globals().get('_mega_run')
-    if not callable(runner): raise RuntimeError('R1 MEGA runner unavailable')
-    _split_os.makedirs(str(workdir), exist_ok=True)
-    res = runner('mega-get', [str(remote), str(workdir)], timeout=360, check=False, control_plane=True)
-    if int(getattr(res, 'returncode', 1) or 0) != 0:
-        raise RuntimeError(str(getattr(res, 'stderr', '') or getattr(res, 'stdout', '') or 'mega-get failed')[:700])
-    name = str(remote or '').rstrip('/').rsplit('/', 1)[-1] or 'mega_restore.bin'
-    target = _split_os.path.join(str(workdir), name)
-    if _split_os.path.isfile(target): return target
-    files = [x for x in _split_os.listdir(str(workdir)) if _split_os.path.isfile(_split_os.path.join(str(workdir), x))]
-    if len(files) == 1: return _split_os.path.join(str(workdir), files[0])
-    raise RuntimeError('R1 MEGA скачал файл, но локальный путь не найден')
-
-
-# --- callback owner switch ---------------------------------------------------
-_R71_CONTOUR_CORE = contour_callback_guard
-
+    """OCH13.6 exact-file download: preferred owner, then the other side; R1 is always allowed for manual recovery."""
+    errors=[]
+    if not _r71_route_is_fast('mega') and callable(_R71_REMOTE_MEGA_DOWNLOAD):
+        try: return _R71_REMOTE_MEGA_DOWNLOAD(remote, workdir)
+        except Exception as exc: errors.append('R2 '+type(exc).__name__+': '+str(exc)[:240])
+    try:
+        if not _r221_manual_mega_ready(): raise RuntimeError('credentials/MEGAcmd unavailable')
+        login=globals().get('mega_login_if_needed')
+        if callable(login): login(control_plane=True)
+        runner=globals().get('_mega_run')
+        if not callable(runner): raise RuntimeError('R1 MEGA runner unavailable')
+        _split_os.makedirs(str(workdir),exist_ok=True)
+        res=runner('mega-get',[str(remote),str(workdir)],timeout=360,check=False,control_plane=True)
+        if int(getattr(res,'returncode',1) or 0)!=0:
+            raise RuntimeError(str(getattr(res,'stderr','') or getattr(res,'stdout','') or 'mega-get failed')[:700])
+        name=str(remote or '').rstrip('/').rsplit('/',1)[-1] or 'mega_restore.bin'
+        target=_split_os.path.join(str(workdir),name)
+        if _split_os.path.isfile(target): return target
+        files=[]
+        for root,_dirs,names in _split_os.walk(str(workdir)):
+            for n in names: files.append(_split_os.path.join(root,n))
+        exact=[x for x in files if _split_os.path.basename(x)==name]
+        if exact: return exact[0]
+        if len(files)==1: return files[0]
+        raise RuntimeError('R1 MEGA скачал файл, но exact local path не найден')
+    except Exception as exc:
+        errors.append('R1 '+type(exc).__name__+': '+str(exc)[:300])
+    if _r71_route_is_fast('mega') and callable(_R71_REMOTE_MEGA_DOWNLOAD):
+        try: return _R71_REMOTE_MEGA_DOWNLOAD(remote, workdir)
+        except Exception as exc: errors.append('R2 fallback '+type(exc).__name__+': '+str(exc)[:240])
+    raise RuntimeError('MEGA file download unavailable: '+'; '.join(errors)[:800])
 
 def _r71_contour_callback_guard(call, resolved):
     raw = str(resolved or '')
@@ -96939,7 +97102,7 @@ import time as _r74_time
 
 _R74_RUNTIME_PARTS = ('runtime_flat.py',)
 _R74_MODULE_PURPOSE = {
-    'runtime_flat.py': 'очнись_13.5: REDIS cache-only + MEGA control-plane/session repair + STRAIGHT finance/forward',
+    'runtime_flat.py': 'очнись_13.6: manual restore unified (slash/upload/MEGA folders) + Telegram pre_restore + Redis non-authority',
 }
 
 
@@ -98390,7 +98553,9 @@ def _r81_apply_compact_events(path,events):
 def _r81_mega_get_exact(remote_path,workdir,timeout_sec=90):
     folder=_split_os.path.join(str(workdir),str(abs(hash(str(remote_path))))[-10:])
     _split_os.makedirs(folder,exist_ok=True)
-    res=_mega_run('mega-get',[str(remote_path),folder],check=False,timeout=float(timeout_sec))
+    login=globals().get('mega_login_if_needed')
+    if callable(login): login(control_plane=True)
+    res=_mega_run('mega-get',[str(remote_path),folder],check=False,timeout=float(timeout_sec),control_plane=True)
     if int(getattr(res,'returncode',1) or 0)!=0:
         return None,str(getattr(res,'stderr','') or getattr(res,'stdout','') or 'mega-get failed')[:240]
     base=_split_os.path.basename(str(remote_path).rstrip('/')); direct=_split_os.path.join(folder,base)
@@ -98468,89 +98633,9 @@ def r81_manual_compact_mega_restore():
         if work: _split_shutil.rmtree(work,ignore_errors=True)
 
 def _r221_manual_redis_restore_sqlite():
-    """OCH12.22 owner-triggered Redis FULL+TAIL restore independent of REDIS_ENABLED.
+    """OCH13.6 hard fence: Redis is cache/coordination only, never a manual recovery source."""
+    return False, 'Redis restore disabled by OCH13.6 policy; use /restore, /restore latest or /restore mega', 0
 
-    The runtime switch stays OFF.  This function reads Redis directly, builds a
-    temporary candidate, replays canonical R32 events page-by-page, then hands the
-    validated file to SQLiteState.replace_database() so open connections are safely
-    reopened on the restored inode.
-    """
-    if _split_get_redis() is None:
-        return False, 'redis package unavailable', 0
-    url = str(_split_os.getenv('REDIS_URL') or _split_os.getenv('RENDER_KEY_VALUE_URL') or _split_os.getenv('KEY_VALUE_URL') or _split_os.getenv('VALKEY_URL') or '').strip()
-    if not url:
-        return False, 'Redis URL отсутствует в Render', 0
-    key = str(_split_os.getenv('WORKER_REDIS_SNAPSHOT_KEY','vys262:bot_state:latest_gz') or 'vys262:bot_state:latest_gz').strip()
-    prefix = str(_split_os.getenv('WORKER_R32_STATE_EVENT_PREFIX','vys262:state_events:r32') or 'vys262:state_events:r32').strip()
-    index_key = prefix + ':index'; head_key = prefix + ':head'; meta_key = key + ':meta'
-    work = _split_tempfile.mkdtemp(prefix='och1221_manual_redis_restore_')
-    client = None
-    applied = stale = decoded = 0
-    try:
-        client = _split_redis.Redis.from_url(url, socket_connect_timeout=3, socket_timeout=15, health_check_interval=30)
-        if not client.ping(): return False, 'Redis PING=false', 0
-        payload = client.get(key)
-        if not payload: return False, f'Redis FULL отсутствует: {key}', 0
-        max_bytes=max(1,min(128,int(_split_os.getenv('WORKER_REDIS_SNAPSHOT_MAX_MB','16') or '16')))*1024*1024
-        if len(payload)>max_bytes: return False,f'Redis FULL слишком большой: {len(payload)} > {max_bytes}',0
-        gz=_split_os.path.join(work,'full.sqlite3.gz'); candidate=_split_os.path.join(work,'candidate.sqlite3')
-        open(gz,'wb').write(bytes(payload))
-        try:
-            with _split_gzip.open(gz,'rb') as src, open(candidate,'wb') as dst:
-                _split_shutil.copyfileobj(src,dst,length=1024*1024)
-        except Exception as exc:
-            return False,f'Redis FULL decompress {type(exc).__name__}: {str(exc)[:180]}',0
-        if not _r81_compact_db_valid(candidate): return False,'Redis FULL SQLite quick_check failed',0
-        meta={}
-        try:
-            raw=client.get(meta_key)
-            if isinstance(raw,(bytes,bytearray)): raw=raw.decode('utf-8','replace')
-            if raw: meta=_split_json.loads(raw) or {}
-        except Exception: meta={}
-        cutoff=float((meta or {}).get('event_cutoff_score') or 0.0)
-        if cutoff<=0: return False,'Redis FULL metadata: нет event_cutoff_score',0
-        raw_head=client.get(head_key)
-        if isinstance(raw_head,(bytes,bytearray)): raw_head=raw_head.decode('utf-8','replace')
-        try: head=float((_split_json.loads(raw_head) if raw_head else {}).get('score') or cutoff)
-        except Exception: head=cutoff
-        total=int(client.zcount(index_key,f'({cutoff}',head) or 0) if head>cutoff else 0
-        max_events=max(1000,min(200000,int(_split_os.getenv('REDIS_RESTORE_MAX_EVENTS','200000') or '200000')))
-        if total>max_events: return False,f'Redis TAIL слишком большой: {total} > {max_events}',0
-        page=max(100,min(5000,int(_split_os.getenv('REDIS_RESTORE_EVENT_PAGE','1000') or '1000')))
-        offset=0
-        while offset<total:
-            pairs=client.zrangebyscore(index_key,f'({cutoff}',head,start=offset,num=page,withscores=True) or []
-            if not pairs: break
-            ids=[]
-            for member,_score in pairs:
-                ids.append(member.decode('utf-8','replace') if isinstance(member,(bytes,bytearray)) else str(member))
-            raws=client.mget([f'{prefix}:event:{eid}' for eid in ids]) or []
-            events=[]
-            for raw in raws:
-                if not raw: return False,'Redis TAIL incomplete: missing event payload',applied
-                try:
-                    b=bytes(raw) if isinstance(raw,(bytes,bytearray)) else str(raw).encode('utf-8')
-                    if b[:2]==b'\x1f\x8b': b=_split_gzip.decompress(b)
-                    ev=_split_json.loads(b.decode('utf-8'))
-                except Exception as exc:
-                    return False,f'Redis TAIL decode {type(exc).__name__}: {str(exc)[:140]}',applied
-                if not _r81_compact_event_valid(ev): return False,'Redis TAIL contains invalid R32 event',applied
-                events.append(ev); decoded += 1
-            a,st=_r81_apply_compact_events(candidate,events); applied+=int(a or 0); stale+=int(st or 0)
-            offset += len(pairs)
-        if not _r81_compact_db_valid(candidate): return False,'Redis candidate invalid after TAIL',applied
-        SQLITE.replace_database(candidate)
-        return True,f'Redis FULL+TAIL manual restore OK snapshot={len(payload)}B events={decoded} applied={applied} stale={stale}',applied
-    except Exception as exc:
-        return False,f'{type(exc).__name__}: {str(exc)[:260]}',applied
-    finally:
-        try:
-            if client is not None: client.close()
-        except Exception: pass
-        _split_shutil.rmtree(work,ignore_errors=True)
-
-# Honor Render's MEGA_ENABLED master switch. Runtime menus may route ownership,
-# but can never turn MEGA back on when Render explicitly supplied MEGA_ENABLED=0.
 def _r71_apply_runtime_side_effects():
     """12.26: legacy MEGA background is always OFF; canonical control-plane durability is separate."""
     try:
