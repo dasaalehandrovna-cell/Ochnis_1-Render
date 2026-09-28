@@ -1,5 +1,5 @@
 # OCHNIS_13 FLAT RUNTIME - generated from OCH12.36
-OCHNIS_RELEASE = "очнись_13.4"
+OCHNIS_RELEASE = "очнись_13.5"
 
 # ===== SOURCE 01_core_data.py =====
 # OCH12.34: infrastructure/wiring shell; business function bodies live only in 11-14 owner files.
@@ -2183,7 +2183,7 @@ RELEASE_SERIES = 'выс'
 RELEASE_NUMBER = 264
 VERSION = f'{RELEASE_SERIES}-{RELEASE_NUMBER}'
 BOT_FILE_NAME = os.path.basename(__file__) if '__file__' in globals() else 'bot_v130_modular_split.py'
-BOT_DISPLAY_NAME = 'очнись_13.4'
+BOT_DISPLAY_NAME = 'очнись_13.5'
 
 def _current_source_path() -> str:
     """Single-file path in legacy mode; reconstructed full source in modular mode."""
@@ -10249,7 +10249,15 @@ except Exception:
 
 # --- ИСТОЧНИК: 10_mega_runtime.py ---
 def mega_is_configured(control_plane: bool=False) -> bool:
-    recovery = bool(globals().get('_V240_RECOVERY_AUTHORITY_ACTIVE', False)) or bool(control_plane)
+    """OCH13.5: distinguish the cold MEGA runtime switch from control-plane durability.
+
+    FAST intentionally keeps ``MEGA_ENABLED`` false during ordinary runtime so MEGAcmd
+    is zero-resident.  A canonical generation/recovery transaction raises
+    ``_V240_RECOVERY_AUTHORITY_ACTIVE``; every nested helper in that transaction must
+    inherit the same control-plane permission even when it did not receive
+    ``control_plane=True`` explicitly.
+    """
+    recovery = bool(control_plane or globals().get('_V240_RECOVERY_AUTHORITY_ACTIVE', False) or globals().get('_V241_RESTORE_ACTIVE', False))
     if not recovery:
         contour_fn = globals().get('mega_contour_enabled_v234')
         if callable(contour_fn):
@@ -10263,12 +10271,12 @@ def mega_is_configured(control_plane: bool=False) -> bool:
             if raw not in {'1', 'true', 'yes', 'on', 'вкл'}:
                 return False
     gate = globals().get('external_access_allowed_v233')
-    gate_category = 'mega_control' if control_plane else 'mega'
+    gate_category = 'mega_control' if recovery else 'mega'
     if callable(gate) and (not gate(gate_category)):
         return False
-    # OCH12.22: MEGA_ENABLED controls normal/background runtime only.
-    # Explicit control-plane recovery is allowed whenever credentials/root exist.
-    enabled_for_call = True if control_plane else bool(MEGA_ENABLED)
+    # OCH13.5: MEGA_ENABLED is only the normal/background residency switch.
+    # Recovery/canonical control-plane work inherits permission from the active lease.
+    enabled_for_call = True if recovery else bool(MEGA_ENABLED)
     return bool(enabled_for_call and MEGA_EMAIL and MEGA_PASSWORD and str(MEGA_BACKUP_DIR or '').strip('/'))
 
 def mega_remote_file_path(filename: str=None) -> str:
@@ -10692,12 +10700,18 @@ def _v190_recreate_remote_path_uncached(remote_dir: str) -> bool:
         bot_journal('mega_root_self_healed_v190', None, f'path={remote_dir}; root_created={int(canonical_root_created)}')
     except Exception:
         pass
-    if canonical_root_created:
+    if canonical_root_created and not bool(globals().get('_V240_RECOVERY_AUTHORITY_ACTIVE', False)):
         _v190_schedule_root_reseed()
     return True
 
 def mega_login_if_needed(control_plane: bool=False) -> bool:
-    """Check the MEGA session at most once per TTL instead of before every command chain."""
+    """OCH13.5: reuse an existing MEGAcmd session instead of relogging it.
+
+    Some MEGAcmd builds return a successful ``mega-whoami`` without the exact legacy
+    text markers this runtime used to require.  Return code 0 is sufficient proof of
+    a live session.  ``Already logged in`` from ``mega-login`` is also a successful
+    state, not an authentication failure.
+    """
     global _V178_MEGA_SESSION_OK_UNTIL
     if not mega_is_configured(control_plane=control_plane):
         return False
@@ -10708,12 +10722,18 @@ def mega_login_if_needed(control_plane: bool=False) -> bool:
     missing = mega_missing_commands()
     if missing:
         raise RuntimeError('MEGAcmd не установлен или команды не в PATH: ' + ', '.join(missing))
+
+    def _stamp_session_ok(detail=''):
+        global _V178_MEGA_SESSION_OK_UNTIL
+        with _V178_MEGA_CACHE_LOCK:
+            _V178_MEGA_SESSION_OK_UNTIL = time.monotonic() + _V178_MEGA_SESSION_TTL_SECONDS
+        if detail:
+            try: bot_journal('mega_session_reused_och135', int(OWNER_ID or 0), str(detail)[:220])
+            except Exception: pass
+        return True
+
     try:
-        # v250: on a fresh Render container there is usually no MEGAcmd session yet.
-        # Do not spend up to 30s proving that before the real login.  This shorter
-        # probe is used only by the control plane; normal MEGA operations keep their
-        # original reliability timeouts.
-        if control_plane:
+        if control_plane or bool(globals().get('_V240_RECOVERY_AUTHORITY_ACTIVE', False)):
             try:
                 whoami_timeout = max(3, min(12, int(os.getenv('MEGA_CONTROL_WHOAMI_TIMEOUT', '6') or '6')))
             except Exception:
@@ -10721,20 +10741,28 @@ def mega_login_if_needed(control_plane: bool=False) -> bool:
         else:
             whoami_timeout = 30
         res = _mega_run('mega-whoami', [], check=False, timeout=whoami_timeout, control_plane=control_plane)
-        text = ((res.stdout or '') + '\n' + (res.stderr or '')).lower()
-        if res.returncode == 0 and (MEGA_EMAIL.lower() in text or 'account e-mail' in text or 'email' in text):
-            with _V178_MEGA_CACHE_LOCK:
-                _V178_MEGA_SESSION_OK_UNTIL = time.monotonic() + _V178_MEGA_SESSION_TTL_SECONDS
-            return True
+        text = ((res.stdout or '') + '\n' + (res.stderr or '')).strip()
+        if res.returncode == 0:
+            # If MEGAcmd exposes an e-mail, refuse a visibly different account.
+            emails = {x.casefold() for x in re.findall(r'[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}', text, flags=re.I)}
+            expected = str(MEGA_EMAIL or '').strip().casefold()
+            if emails and expected and expected not in emails:
+                raise RuntimeError(f'MEGA session account mismatch: expected {expected}, got {sorted(emails)[0]}')
+            return _stamp_session_ok('mega-whoami returncode=0')
+    except RuntimeError:
+        raise
     except Exception:
         pass
+
     res = _mega_run('mega-login', [MEGA_EMAIL, MEGA_PASSWORD], check=False, timeout=MEGA_TIMEOUT, control_plane=control_plane)
+    login_text = ((res.stderr or '') + '\n' + (res.stdout or '')).strip()
     if res.returncode != 0:
-        msg = ((res.stderr or '') or (res.stdout or '') or 'login failed')[:500]
+        low = login_text.casefold()
+        if 'already logged in' in low or 'already logged' in low:
+            return _stamp_session_ok('mega-login reported already logged in')
+        msg = (login_text or 'login failed')[:500]
         raise RuntimeError(f'mega-login failed: {msg}')
-    with _V178_MEGA_CACHE_LOCK:
-        _V178_MEGA_SESSION_OK_UNTIL = time.monotonic() + _V178_MEGA_SESSION_TTL_SECONDS
-    return True
+    return _stamp_session_ok('mega-login success')
 
 def _v178_mega_ensure_cached_path(remote_dir: str, force: bool=False) -> bool:
     if not mega_login_if_needed():
@@ -20374,7 +20402,8 @@ def constitution_publish_sqlite_generation(raw_sqlite: str, gz_path: str, create
     duplicates the same compressed SQLite bytes. Set MEGA_LEGACY_DB_MIRROR_ENABLED=1 only
     for temporary backward compatibility with an old runtime.
     """
-    if not mega_is_configured():
+    _control_plane = bool(globals().get('_V240_RECOVERY_AUTHORITY_ACTIVE', False) or globals().get('_V241_RESTORE_ACTIVE', False))
+    if not mega_is_configured(control_plane=_control_plane):
         raise RuntimeError('MEGA unavailable')
     candidate = constitution_semantic_manifest_from_sqlite(raw_sqlite)
     exact = _v239_generation_exact_preflight(raw_sqlite, candidate, require_embedded=True)
@@ -21077,8 +21106,16 @@ def constitution_ledger_append(chat_id: int, action: str, record: dict | None, d
             pass
         return True
     if not mega_is_configured():
-        constitution_set_quarantine('finance ledger unavailable: MEGA is not configured')
-        return False
+        # OCH13.5: external backup availability is not a finance-integrity verdict.
+        # The immutable event is already fsynced in local SQLite above; keep it pending
+        # for a later canonical MEGA flush and let the business mutation complete.
+        with _CONSTITUTION_LEDGER_ASYNC_LOCK:
+            _CONSTITUTION_LEDGER_ASYNC_STATE[token] = {'state': 'local_only', 'seq': int(seq), 'at': time.monotonic(), 'backend': 'sqlite_pending'}
+        try:
+            bot_journal('constitution_ledger_durability_degraded_och135', int(chat_id), f'seq={int(seq)}; queued={name}; reason=MEGA unavailable')
+        except Exception:
+            pass
+        return True
     ctx = {}
     try:
         fn = globals().get('_current_telegram_update_context')
@@ -21971,6 +22008,13 @@ def mega_publish_current_sqlite_v1226(reason: str='scheduled_generation') -> dic
     try:
         if not mega_is_configured(control_plane=True):
             raise RuntimeError('MEGA canonical control plane unavailable')
+        if not mega_login_if_needed(control_plane=True):
+            raise RuntimeError('MEGA canonical login unavailable')
+        # OCH13.5: an absent canonical root is self-healed before the first generation.
+        # This is the intended EMPTY_INIT -> autoseed path and does not depend on the
+        # ordinary FAST MEGA residency switch.
+        if not mega_ensure_remote_path(MEGA_BACKUP_DIR, force=True):
+            raise RuntimeError(f'MEGA canonical root create failed: {MEGA_BACKUP_DIR}')
         with MEGA_GLOBAL_BACKUP_LOCK:
             # Persist the global/root configuration without touching every cold chat.
             # This captures owner settings, routes, reminders/config indexes and other
@@ -34506,7 +34550,15 @@ def sync_edited_copy_to_target(source_chat_id: int, msg, dst_chat_id: int, dst_m
         _v212_task_reconcile_forward_copy(dst_chat_id, dst_msg_id, source_chat_id, msg, is_edit=True)
         return dst_msg_id
     except Exception as e:
-        log_error(f'sync_edited_copy_to_target direct edit failed {dst_chat_id}:{dst_msg_id}: {e}')
+        _edit_err = str(e)
+        _edit_low = _edit_err.casefold()
+        if any(x in _edit_low for x in ("message can't be edited", 'message to edit not found', 'message_id_invalid', 'message identifier is not specified')):
+            try:
+                bot_journal('forward_edit_replace_fallback_och135', int(source_chat_id), f'dst={int(dst_chat_id)}:{int(dst_msg_id)}; reason={_edit_err[:220]}')
+            except Exception:
+                pass
+        else:
+            log_error(f'sync_edited_copy_to_target direct edit failed {dst_chat_id}:{dst_msg_id}: {e}')
     reply_to_target_id = None
     try:
         reply_to_msg = getattr(msg, 'reply_to_message', None)
@@ -87748,12 +87800,14 @@ def _split_event_id_v268(update_id):
     return str(update_id)
 
 def _split_event_row_v268(update_id, payload, chat_id=None, update_type='other'):
+    """OCH13.5 Redis/Worker witness: metadata only, never executable Telegram JSON."""
     raw = _split_json.dumps(payload if isinstance(payload,dict) else {}, ensure_ascii=False, separators=(',',':'), default=str)
     return {
         'schema': 1, 'event_id': _split_event_id_v268(update_id), 'update_id': str(update_id),
         'chat_id': chat_id, 'update_type': str(update_type or 'other')[:40],
-        'payload': payload if isinstance(payload,dict) else {},
         'payload_sha256': _split_hashlib.sha256(raw.encode('utf-8')).hexdigest(),
+        'payload_bytes': len(raw.encode('utf-8')),
+        'executable_payload': False,
         'state': 'received', 'received_at': _split_time.time(),
         'front_version': _SPLIT_FRONT_VERSION,
     }
@@ -87776,6 +87830,9 @@ def _split_event_redis_write_v268(row, state=None, error=''):
             if existing: current=_split_json.loads(existing.decode('utf-8') if isinstance(existing,(bytes,bytearray)) else existing)
         except Exception: current={}
         merged=dict(current or {}); merged.update(row or {})
+        # OCH13.5 hard fence: Redis is coordination/dedupe only.
+        merged.pop('payload', None)
+        merged['executable_payload'] = False
         _rank={'received':1,'failed_retry':1,'committed':2,'mirrored':3,'checkpointed':4,'done':4}
         old_state=str((current or {}).get('state') or '')
         new_state=str(state or merged.get('state') or '')
@@ -87882,52 +87939,21 @@ def _split_ack_mirrored_events_v268(event_ids):
     _SPLIT_STATE['event_mirrored']=int(_SPLIT_STATE.get('event_mirrored') or 0)+len(ids)
 
 def _split_remote_pending_rows_v268(limit=100):
-    # R16: query the authoritative Redis event journal first; Worker is a fallback.
-    if _split_get_redis() is not None:
-        url=_r61_effective_redis_url()
-        if url:
-            try:
-                client=_split_redis.Redis.from_url(url,socket_connect_timeout=1.5,socket_timeout=3)
-                prefix=_split_event_prefix_v268(); ids=client.zrange(f'{prefix}:pending',0,max(0,min(249,int(limit)-1))) or []
-                rows=[]
-                for raw_id in ids:
-                    eid=raw_id.decode() if isinstance(raw_id,(bytes,bytearray)) else str(raw_id)
-                    raw=client.get(f'{prefix}:event:{eid}')
-                    if not raw: continue
-                    try: row=_split_json.loads(raw.decode('utf-8') if isinstance(raw,(bytes,bytearray)) else raw)
-                    except Exception: continue
-                    if str((row or {}).get('state') or '') in {'received','failed_retry','committed'}: rows.append(row)
-                return rows
-            except Exception:
-                pass
-    base,secret=_split_peer_base(),_split_secret()
-    if base and secret:
-        try:
-            r=requests.get(base+'/internal/events/pending',params={'limit':max(1,min(250,int(limit)))},headers=_split_headers('vys-262-front-event-recover-r16-fallback'),timeout=8)
-            if 200 <= r.status_code < 300:
-                body=r.json() if r.content else {}; return list(body.get('events') or [])
-        except Exception: pass
+    """OCH13.5: Redis/Worker is never an executable Telegram recovery source."""
+    _SPLIT_STATE['event_replay_disabled'] = True
+    _SPLIT_STATE['event_replay_policy'] = 'metadata-dedupe-only'
     return []
 
 def split_recover_remote_events_v268(limit=100):
-    """Replay remote witnessed-but-not-mirrored Telegram updates after abrupt deploy."""
-    recovered=0
-    for row in _split_remote_pending_rows_v268(limit):
-        try:
-            update_id=row.get('update_id') or row.get('event_id'); payload=row.get('payload') or {}
-            chat_id=row.get('chat_id'); update_type=str(row.get('update_type') or 'other')
-            if update_id is None or not isinstance(payload,dict): continue
-            state_fn=globals().get('_v260_webhook_inbox_state'); put_fn=globals().get('_v260_webhook_inbox_put'); submit_fn=globals().get('_v260_submit_webhook_inbox_row'); row_fn=globals().get('_v260_webhook_inbox_row')
-            if not all(callable(x) for x in (state_fn,put_fn,submit_fn,row_fn)): continue
-            if state_fn(update_id)=='done':
-                split_event_committed_v268(update_id,chat_id,update_type,True,'already local done')
-                continue
-            if not put_fn(update_id,payload,chat_id,update_type): continue
-            if submit_fn(row_fn(update_id)):
-                recovered+=1
-        except Exception: continue
-    _SPLIT_STATE['event_recovered']=int(_SPLIT_STATE.get('event_recovered') or 0)+recovered
-    return recovered
+    """OCH13.5: intentionally do not replay remote Telegram commands after deploy.
+
+    Local webhook SQLite may recover only same-instance pending work.  Remote Redis/R2
+    witnesses are forensic/dedupe metadata and can never be passed to
+    ``process_new_updates`` or any callback/message handler.
+    """
+    _SPLIT_STATE['event_replay_disabled'] = True
+    _SPLIT_STATE['event_recovered'] = 0
+    return 0
 
 
 def _split_authorized_request():
@@ -96913,7 +96939,7 @@ import time as _r74_time
 
 _R74_RUNTIME_PARTS = ('runtime_flat.py',)
 _R74_MODULE_PURPOSE = {
-    'runtime_flat.py': 'очнись_13.4: STRAIGHT finance/fin-forward/forward runtime; identity-safe after restore',
+    'runtime_flat.py': 'очнись_13.5: REDIS cache-only + MEGA control-plane/session repair + STRAIGHT finance/forward',
 }
 
 

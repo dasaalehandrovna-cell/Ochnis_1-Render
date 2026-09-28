@@ -37,7 +37,7 @@ for rel in ['bot.py','runtime_flat.py','start_front.py','runtime_config.py','FIN
 bot=read('bot.py'); runtime=read('runtime_flat.py'); start=read('start_front.py'); cfg=read('runtime_config.py'); docker=read('Dockerfile')
 
 # OCHNIS 13 removes runtime source reconstruction completely.
-check('release_name', "BOT_DISPLAY_NAME = 'очнись_13.4'" in runtime and "OCHNIS_RELEASE = 'очнись_13.4'" in bot)
+check('release_name', "BOT_DISPLAY_NAME = 'очнись_13.5'" in runtime and "OCHNIS_RELEASE = 'очнись_13.5'" in bot)
 check('no_owner_install_runtime', '_owner_install(' not in runtime and '_owner_install(' not in bot)
 check('no_exec_compile_runtime', 'exec(compile(' not in runtime and 'exec(compile(' not in bot)
 check('thin_bot_entry', 'import runtime_flat as _runtime' in bot and 'main = _runtime.main' in bot)
@@ -99,6 +99,16 @@ check('finance_forward_source_first', 'def _v260_find_forward_finance_record' in
 check('finance_forward_op_ledger_bot_scoped', "return f\"{int(_current_bot_id_for_forwarding() or 0)}:{int(source_chat_id)}:{int(source_msg_id)}:{int(dst_chat_id)}\"" in runtime)
 check('probe_network_no_state_mutation', "_probe_network_only = str(purpose or '').startswith('probe_')" in runtime)
 
+# OCHNIS 13.5 Redis/MEGA gates.
+check('redis_remote_replay_hard_disabled', "def split_recover_remote_events_v268(limit=100):" in runtime and "event_replay_policy'] = 'metadata-dedupe-only'" in runtime and 'submit_fn(row_fn(update_id))' not in runtime[runtime.find('def split_recover_remote_events_v268'):runtime.find('def _split_authorized_request')])
+_event_row_src = runtime[runtime.find('def _split_event_row_v268'):runtime.find('def _split_event_redis_write_v268')]
+check('redis_no_raw_telegram_payload', "'payload': payload" not in _event_row_src and "'executable_payload': False" in _event_row_src)
+check('mega_controlplane_inherits_lease', "enabled_for_call = True if recovery else bool(MEGA_ENABLED)" in runtime and "gate_category = 'mega_control' if recovery else 'mega'" in runtime)
+check('mega_existing_session_ok', 'mega-login reported already logged in' in runtime and 'if res.returncode == 0:' in runtime[runtime.find('def mega_login_if_needed'):runtime.find('def _v178_mega_ensure_cached_path')])
+check('mega_autoseed_root_before_generation', "mega_ensure_remote_path(MEGA_BACKUP_DIR, force=True)" in runtime[runtime.find('def mega_publish_current_sqlite_v1226'):runtime.find('def mega_publish_current_sqlite_v242')])
+check('finance_mega_degraded_not_quarantine', 'constitution_ledger_durability_degraded_och135' in runtime and "constitution_set_quarantine('finance ledger unavailable: MEGA is not configured')" not in runtime)
+check('forward_immutable_edit_replace_fallback', 'forward_edit_replace_fallback_och135' in runtime)
+
 ns={}
 try:
     exec(compile(cfg,'runtime_config.py','exec'),ns,ns)
@@ -139,7 +149,7 @@ if STARTUP_SMOKE:
     code=(
         "import bot; "
         "assert callable(bot.main); "
-        "assert bot.BOT_DISPLAY_NAME=='очнись_13.4'; "
+        "assert bot.BOT_DISPLAY_NAME=='очнись_13.5'; "
         "assert (getattr(bot,'_SPLIT_STATE',{}) or {}).get('och13_mode')=='STANDALONE_R1'; "
         "print('OCH13_STARTUP_IMPORT_OK')"
     )
@@ -150,7 +160,7 @@ if STARTUP_SMOKE:
         check('startup_without_r2',False,exc)
 
 passed=sum(1 for _,v,_ in checks if v); total=len(checks)
-print(f'FINALIZATION OCHNIS 13.4: {passed}/{total} PASS')
+print(f'FINALIZATION OCHNIS 13.5: {passed}/{total} PASS')
 if passed!=total:
     for name,val,detail in checks:
         if not val: print(' -',name,detail)

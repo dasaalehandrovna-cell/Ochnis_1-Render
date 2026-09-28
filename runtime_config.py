@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from typing import Dict
 
-CONFIG_VERSION = "ochnis-13.4-straight-fin-forward-r1"
+CONFIG_VERSION = "ochnis-13.5-redis-cache-mega-controlplane"
 
 # Render #1 / FAST.  These values were the R13 recommended deployment values.
 FRONT_INTERNAL_ENV: Dict[str, str] = {
@@ -149,7 +149,8 @@ FRONT_INTERNAL_ENV: Dict[str, str] = {
 
     # R68 local ephemeral runtime layer.
     # Render Free may wipe these files on redeploy/restart; they are acceleration /
-    # same-instance crash breadcrumbs only. Long-term durability remains Redis/HEAVY/MEGA.
+    # same-instance crash breadcrumbs only. Long-term business durability is HEAVY/MEGA;
+    # Redis is cache/coordination/dedupe only and is never a restore authority.
     "LOCAL_RUNTIME_DIR": "/tmp/vys262_fast_local",
     "BOT_JOURNAL_FILE": "/tmp/och_journal/events.jsonl",
     "WEBHOOK_INBOX_DB_FILE": "/tmp/vys262_fast_local/webhook.sqlite3",
@@ -171,6 +172,9 @@ FRONT_INTERNAL_ENV: Dict[str, str] = {
     "WORKER_REDIS_SNAPSHOT_KEY": "vys262:bot_state:latest_gz",
     "WORKER_REDIS_SNAPSHOT_MAX_MB": "16",
     "WORKER_REDIS_EVENT_PREFIX": "vys262:tg_events:v1",
+    "REDIS_EXECUTABLE_EVENT_REPLAY_ENABLED": "0",
+    "REDIS_RAW_TELEGRAM_PAYLOAD_ENABLED": "0",
+    "REDIS_RESTORE_AUTHORITY_ENABLED": "0",
     "WORKER_EVENT_RETENTION_SEC": "604800",
 
     # Peer / event-journal transport
@@ -290,7 +294,9 @@ WORKER_INTERNAL_ENV: Dict[str, str] = {
 
 
 # R57: Render master switches are captured before packaged tuning is installed.
-# MEGA_ENABLED=0 disables every MEGA path; REDIS_ENABLED=0 disables every Redis path.
+# MEGA_ENABLED=0 disables ordinary/background MEGA residency; canonical recovery/durability
+# may use a short control-plane lease when the Render MEGA master was enabled at process start.
+# REDIS_ENABLED=0 disables every Redis path.
 # TELEGRAM_BACKUP_ENABLED=0 disables the Telegram backup/durable channel on FAST.
 # R59: preserve the exact process environment as it arrived from Render before
 # packaged runtime_config mutates/overwrites operational values.  This is used
