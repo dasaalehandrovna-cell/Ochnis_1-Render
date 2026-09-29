@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from typing import Dict
 
-CONFIG_VERSION = "ochnis-13.6-manual-restore-unified"
+CONFIG_VERSION = "ochnis-13.7-callback-core-hotfix"
 
 # Render #1 / FAST.  These values were the R13 recommended deployment values.
 FRONT_INTERNAL_ENV: Dict[str, str] = {

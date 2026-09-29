@@ -1,5 +1,5 @@
 # OCHNIS_13 FLAT RUNTIME - generated from OCH12.36
-OCHNIS_RELEASE = "очнись_13.6"
+OCHNIS_RELEASE = "очнись_13.7"
 
 # ===== SOURCE 01_core_data.py =====
 # OCH12.34: infrastructure/wiring shell; business function bodies live only in 11-14 owner files.
@@ -2183,7 +2183,7 @@ RELEASE_SERIES = 'выс'
 RELEASE_NUMBER = 264
 VERSION = f'{RELEASE_SERIES}-{RELEASE_NUMBER}'
 BOT_FILE_NAME = os.path.basename(__file__) if '__file__' in globals() else 'bot_v130_modular_split.py'
-BOT_DISPLAY_NAME = 'очнись_13.6'
+BOT_DISPLAY_NAME = 'очнись_13.7'
 
 def _current_source_path() -> str:
     """Single-file path in legacy mode; reconstructed full source in modular mode."""
@@ -96135,6 +96135,10 @@ def _v265_heavy_download_mega_file(remote, workdir):
         try: return _R71_REMOTE_MEGA_DOWNLOAD(remote, workdir)
         except Exception as exc: errors.append('R2 fallback '+type(exc).__name__+': '+str(exc)[:240])
     raise RuntimeError('MEGA file download unavailable: '+'; '.join(errors)[:800])
+
+# OCH13.7 HOTFIX: preserve the pre-R71 callback owner before installing the R71 guard.
+_R71_CONTOUR_CORE = contour_callback_guard
+
 
 def _r71_contour_callback_guard(call, resolved):
     raw = str(resolved or '')
