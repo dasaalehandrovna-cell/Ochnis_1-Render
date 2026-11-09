@@ -1,5 +1,4 @@
-Flask>=3.0,<4
-requests>=2.31,<3
-pyTelegramBotAPI>=4.20,<5
-redis>=5.0,<6
-waitress>=3.0,<4
+aiogram>=3.13,<4.0
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+pydantic-settings>=2.5,<3.0
